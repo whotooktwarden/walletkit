@@ -11,6 +11,8 @@
 #include <sys/time.h>
 #include <string.h>
 
+#define NUM_NODES 10
+
 struct BRHederaTransactionRecord {
     BRHederaAddress source;
     BRHederaAddress target;
@@ -169,32 +171,18 @@ hederaTransactionGetMemo(BRHederaTransaction transaction)
     return NULL;
 }
 
-extern size_t
-hederaTransactionSignTransaction (BRHederaTransaction transaction,
-                                  BRKey publicKey,
-                                  UInt512 seed)
+static uint8_t* hederaTransactionSignTransactionWithNode (BRHederaTransaction transaction,
+                                                          BRKey publicKey,
+                                                          const unsigned char * privateKey,
+                                                          BRHederaAddress node,
+                                                          BRHederaUnitTinyBar fee,
+                                                          size_t *bufferSize)
 {
-    assert (transaction);
-
-    // If previously signed - delete and resign
-    if (transaction->serializedBytes) {
-        free (transaction->serializedBytes);
-        transaction->serializedSize = 0;
-    }
-
-    BRHederaUnitTinyBar fee = hederaFeeBasisGetFee(&transaction->feeBasis);
-
-    // Generate the private key from the seed
-    BRKey key = hederaKeyCreate (seed);
-    unsigned char privateKey[64] = {0};
-    unsigned char temp[32] = {0}; // Use the public key that is sent in instead
-    ed25519_create_keypair (temp, privateKey, key.secret.u8);
-
     // First we need to serialize the body since it is the thing we sign
     size_t bodySize;
     uint8_t * body = hederaTransactionBodyPack (transaction->source,
                                                 transaction->target,
-                                                transaction->nodeAddress,
+                                                node,
                                                 transaction->amount,
                                                 transaction->timeStamp,
                                                 fee,
@@ -210,14 +198,58 @@ hederaTransactionSignTransaction (BRHederaTransaction transaction,
     uint8_t * serializedBytes = hederaTransactionPack (signature, 64,
                                                        publicKey.pubKey, 32,
                                                        body, bodySize,
-                                                       &transaction->serializedSize);
+                                                       bufferSize);
+    free(body);
+    return serializedBytes;
+}
+
+static size_t
+hederaTransactionSignMultipleSerializations (BRHederaTransaction transaction, BRKey publicKey,
+                                             const unsigned char *privateKey, BRHederaUnitTinyBar fee)
+{
+    transaction->serializedSize = 0;
+    uint8_t * pSerializedBytes = NULL;
+    for (int32_t i = 0; i < NUM_NODES; i++) {
+        int32_t numNumber = i + 3; // Nodes 0 - 2 are not used
+        size_t size = 0;
+        BRHederaAddress node = hederaAddressCreate(0, 0, numNumber);
+        uint8_t * signedBytes = hederaTransactionSignTransactionWithNode(transaction, publicKey, privateKey,
+                                                                         node, fee, &size);
+        if (i == 0) { // First time through
+            // Create the buffer
+            // - 3 bytes for the header
+            // - enough room for NUM_NODES (6 bytes for a header plus serialization)
+            // - plus a 64 byte padding
+            transaction->serializedBytes = calloc(1, 3 + ((size + 6) * NUM_NODES) + 64);
+            transaction->serializedBytes[0] = 1; // Version 1 of the protocol
+            transaction->serializedBytes[2] = NUM_NODES; // How many serializations we are sending
+            pSerializedBytes = transaction->serializedBytes + 3; // Pointer to after the header
+        }
+        uint16_t networkNodeNumber = htons(numNumber);
+        uint32_t networkSize = htonl(size);
+        memcpy(pSerializedBytes, &networkNodeNumber, 2);
+        memcpy(pSerializedBytes + 2, &networkSize, 4);
+        memcpy(pSerializedBytes + 6, signedBytes, size);
+        pSerializedBytes += (6 + size);
+        free(signedBytes);
+        hederaAddressFree(node);
+    }
+
+    // Calculate the size using pointer arithmetic
+    transaction->serializedSize = (unsigned long)(pSerializedBytes - transaction->serializedBytes);
+    return transaction->serializedSize;
+}
+
+static size_t
+hederaTransactionSignSingleSerialization (BRHederaTransaction transaction, BRKey publicKey,
+                                          const unsigned char *privateKey, BRHederaUnitTinyBar fee)
+{
+    uint8_t * serializedBytes = hederaTransactionSignTransactionWithNode(transaction, publicKey, privateKey,
+                                                                         transaction->nodeAddress, fee,
+                                                                         &transaction->serializedSize);
 
     // Create the hash from the serialized bytes
     BRSHA384(transaction->hash.bytes, serializedBytes, transaction->serializedSize);
-
-    // We are now done with the body - it was copied to the serialized bytes so we
-    // must clean up it now.
-    free (body);
 
     // Due to how the Hedera API works the "node account id" of the server we will submit to
     // is included in the signing data so we MUST get the server to use the correct node.
@@ -243,6 +275,31 @@ hederaTransactionSignTransaction (BRHederaTransaction transaction,
 
     transaction->serializedSize += HEDERA_ADDRESS_SERIALIZED_SIZE; // This will be our new size of serialized bytes
     return transaction->serializedSize;
+}
+
+extern size_t
+hederaTransactionSignTransaction (BRHederaTransaction transaction,
+                                  BRKey publicKey,
+                                  UInt512 seed)
+{
+    assert (transaction);
+
+    // If previously signed - delete and resign
+    if (transaction->serializedBytes) {
+        free (transaction->serializedBytes);
+        transaction->serializedSize = 0;
+    }
+
+    // Generate the private key from the seed
+    BRKey key = hederaKeyCreate (seed);
+    unsigned char privateKey[64] = {0};
+    unsigned char temp[32] = {0}; // Use the public key that is sent in instead
+    ed25519_create_keypair (temp, privateKey, key.secret.u8);
+
+    BRHederaUnitTinyBar fee = hederaFeeBasisGetFee(&transaction->feeBasis);
+
+    // return hederaTransactionSignSingleSerialization(transaction, publicKey, privateKey, fee);
+    return hederaTransactionSignMultipleSerializations(transaction, publicKey, privateKey, fee);
 }
 
 extern uint8_t * hederaTransactionSerialize (BRHederaTransaction transaction, size_t *size)
