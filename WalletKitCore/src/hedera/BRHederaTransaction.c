@@ -5,11 +5,13 @@
 #include "BRHederaCrypto.h"
 #include "BRHederaSerialize.h"
 #include "ed25519/ed25519.h"
+#include "support/BRArray.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <sys/time.h>
 #include <string.h>
+#include "ethereum/util/BRUtilHex.h"
 
 #define NUM_NODES 10
 
@@ -22,19 +24,21 @@ struct BRHederaTransactionRecord {
     uint8_t * serializedBytes;
     size_t serializedSize;
     BRHederaTransactionHash hash;
+    bool hashIsSet;
     BRHederaFeeBasis feeBasis;
     BRHederaAddress nodeAddress;
     BRHederaTimeStamp timeStamp;
     uint64_t blockHeight;
     int error;
     char * memo;
+    BRArrayOf(BRHederaTransactionHash) hashes;
 };
 
 char * createTransactionID(BRHederaAddress address, BRHederaTimeStamp timeStamp)
 {
     char buffer[128] = {0};
     const char * hederaAddress = hederaAddressAsString(address);
-    sprintf(buffer, "%s-%" PRIi64 "-%" PRIi32, hederaAddress, timeStamp.seconds, timeStamp.nano);
+    sprintf(buffer, "%s-%" PRIi64 "-%09" PRIi32, hederaAddress, timeStamp.seconds, timeStamp.nano);
     char * result = calloc(1, strlen(buffer) + 1);
     strncpy(result, buffer, strlen(buffer));
     return result;
@@ -64,6 +68,7 @@ extern BRHederaTransaction hederaTransactionCreateNew (BRHederaAddress source,
     transaction->transactionId = createTransactionID(source, transaction->timeStamp);
     transaction->blockHeight = 0;
     transaction->error = 0;
+    transaction->hashIsSet = false;
     return transaction;
 }
 
@@ -100,6 +105,7 @@ extern BRHederaTransaction hederaTransactionCreate (BRHederaAddress source,
     }
 
     transaction->hash = hash;
+    transaction->hashIsSet = true;
     transaction->blockHeight = blockHeight;
     transaction->error = error;
 
@@ -116,6 +122,7 @@ hederaTransactionClone (BRHederaTransaction transaction)
     newTransaction->amount = hederaTransactionGetAmount(transaction);
     newTransaction->fee = transaction->fee;
     newTransaction->feeBasis = transaction->feeBasis;
+    newTransaction->error = transaction->error;
 
     if (transaction->transactionId && strlen(transaction->transactionId) > 1) {
         newTransaction->transactionId = (char*) calloc(1, strlen(transaction->transactionId) + 1);
@@ -139,6 +146,13 @@ hederaTransactionClone (BRHederaTransaction transaction)
     if (transaction->memo) {
         newTransaction->memo = strdup(transaction->memo);
     }
+
+    // Copy the hashes - I guess
+    if (transaction->hashes) {
+        array_new(newTransaction->hashes, array_count(transaction->hashes));
+        array_add_array(newTransaction->hashes, transaction->hashes, array_count(transaction->hashes));
+    }
+
     return newTransaction;
 }
 
@@ -151,6 +165,7 @@ extern void hederaTransactionFree (BRHederaTransaction transaction)
     if (transaction->target) hederaAddressFree (transaction->target);
     if (transaction->nodeAddress) hederaAddressFree (transaction->nodeAddress);
     if (transaction->memo) free(transaction->memo);
+    if (transaction->hashes) array_free(transaction->hashes);
     free (transaction);
 }
 
@@ -207,6 +222,8 @@ static size_t
 hederaTransactionSignMultipleSerializations (BRHederaTransaction transaction, BRKey publicKey,
                                              const unsigned char *privateKey, BRHederaUnitTinyBar fee)
 {
+    if (transaction->hashes) array_free(transaction->hashes);
+    array_new(transaction->hashes, NUM_NODES);
     transaction->serializedSize = 0;
     uint8_t * pSerializedBytes = NULL;
     for (int32_t i = 0; i < NUM_NODES; i++) {
@@ -215,14 +232,23 @@ hederaTransactionSignMultipleSerializations (BRHederaTransaction transaction, BR
         BRHederaAddress node = hederaAddressCreate(0, 0, numNumber);
         uint8_t * signedBytes = hederaTransactionSignTransactionWithNode(transaction, publicKey, privateKey,
                                                                          node, fee, &size);
-        if (i == 0) { // First time through
-            // Create the buffer
+
+        // Store the hash for this serialization
+        BRHederaTransactionHash hash;
+        BRSHA384(hash.bytes, signedBytes, size);
+        array_add(transaction->hashes, hash);
+
+        if (i == 0) { // First serialization
+            // We now have an idea of how much memory is needed for a single serialization
             // - 3 bytes for the header
             // - enough room for NUM_NODES (6 bytes for a header plus serialization)
-            // - plus a 64 byte padding
-            transaction->serializedBytes = calloc(1, 3 + ((size + 6) * NUM_NODES) + 64);
-            transaction->serializedBytes[0] = 1; // Version 1 of the protocol
-            transaction->serializedBytes[2] = NUM_NODES; // How many serializations we are sending
+            // - plus some padding just in case the other serializations are larger - will truncate later
+            transaction->serializedBytes = calloc(1, 3 + ((size + 6) * NUM_NODES) + 1024);
+
+            // Add the header info - version plus the number of serializations
+            transaction->serializedBytes[0] = (uint8_t)1; // Version 1 of the protocol
+            uint16_t numSerializtions = htons(NUM_NODES);
+            memcpy(&transaction->serializedBytes[1], &numSerializtions, 2);
             pSerializedBytes = transaction->serializedBytes + 3; // Pointer to after the header
         }
         uint16_t networkNodeNumber = htons(numNumber);
@@ -237,43 +263,8 @@ hederaTransactionSignMultipleSerializations (BRHederaTransaction transaction, BR
 
     // Calculate the size using pointer arithmetic
     transaction->serializedSize = (unsigned long)(pSerializedBytes - transaction->serializedBytes);
-    return transaction->serializedSize;
-}
-
-static size_t
-hederaTransactionSignSingleSerialization (BRHederaTransaction transaction, BRKey publicKey,
-                                          const unsigned char *privateKey, BRHederaUnitTinyBar fee)
-{
-    uint8_t * serializedBytes = hederaTransactionSignTransactionWithNode(transaction, publicKey, privateKey,
-                                                                         transaction->nodeAddress, fee,
-                                                                         &transaction->serializedSize);
-
-    // Create the hash from the serialized bytes
-    BRSHA384(transaction->hash.bytes, serializedBytes, transaction->serializedSize);
-
-    // Due to how the Hedera API works the "node account id" of the server we will submit to
-    // is included in the signing data so we MUST get the server to use the correct node.
-    // The BDB server implementation requires that we add in the node account id along with
-    // the serialized bytes.
-    uint8_t nodeAccountId[HEDERA_ADDRESS_SERIALIZED_SIZE];
-    hederaAddressSerialize (transaction->nodeAddress, nodeAccountId, HEDERA_ADDRESS_SERIALIZED_SIZE);
-
-    // The buffer has to hold the nodeAccountId and the serialized bytes
-    transaction->serializedBytes = calloc(1, transaction->serializedSize + HEDERA_ADDRESS_SERIALIZED_SIZE);
-
-    // First copy the nodeAccountId,
-    memcpy(transaction->serializedBytes, nodeAccountId, HEDERA_ADDRESS_SERIALIZED_SIZE);
-
-    // Now copy the serialized transaction bytes after the node account id
-    memcpy(transaction->serializedBytes + HEDERA_ADDRESS_SERIALIZED_SIZE, serializedBytes, transaction->serializedSize);
-
-    // Cleanup temporary buffers
-    free (serializedBytes);
-
-    // Create the transaction id
-    transaction->transactionId = createTransactionID(transaction->source, transaction->timeStamp);
-
-    transaction->serializedSize += HEDERA_ADDRESS_SERIALIZED_SIZE; // This will be our new size of serialized bytes
+    // Truncate the buffer to the actual size
+    transaction->serializedBytes = realloc(transaction->serializedBytes, transaction->serializedSize);
     return transaction->serializedSize;
 }
 
@@ -298,7 +289,6 @@ hederaTransactionSignTransaction (BRHederaTransaction transaction,
 
     BRHederaUnitTinyBar fee = hederaFeeBasisGetFee(&transaction->feeBasis);
 
-    // return hederaTransactionSignSingleSerialization(transaction, publicKey, privateKey, fee);
     return hederaTransactionSignMultipleSerializations(transaction, publicKey, privateKey, fee);
 }
 
@@ -370,9 +360,7 @@ extern bool hederaTransactionEqual (BRHederaTransaction t1, BRHederaTransaction 
         }
     } else {
         // Transaction IDs are not available - use the hash
-        BRHederaTransactionHash hash1 = hederaTransactionGetHash(t1);
-        BRHederaTransactionHash hash2 = hederaTransactionGetHash(t2);
-        if (memcmp(hash1.bytes, hash2.bytes, sizeof(hash1.bytes)) == 0) {
+        if (hederaTransactionHashEqual(t1, t2)) {
             // Hash is the same - compare the source
             BRHederaAddress source1 = hederaTransactionGetSource(t1);
             BRHederaAddress source2 = hederaTransactionGetSource(t2);
@@ -391,6 +379,54 @@ extern bool hederaTransactionEqual (BRHederaTransaction t1, BRHederaTransaction 
         }
     }
     return result;
+}
+
+static int findHashInList (BRHederaTransactionHash *hash, BRArrayOf(BRHederaTransactionHash) hashes)
+{
+    for (int i = 0; i < array_count(hashes); i++) {
+        if (0 == memcmp(hash, &hashes[i], sizeof(BRHederaTransactionHash))) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+extern bool hederaTransactionHashEqual (BRHederaTransaction t1, BRHederaTransaction t2)
+{
+    // When we submit a transfer to Blockset for Hedera - we are forced to send
+    // multiple serializations where each one has a different hash - so we might
+    // have to check out all the hashes if applicable
+
+    // Go through the hash list and find the match
+    int hashCount1 = hederaTransactionGetHashCount(t1);
+    int hashCount2 = hederaTransactionGetHashCount(t2);
+
+    if (hashCount1 == 0 || hashCount2 == 0) {
+        return false;
+    } else if (hashCount1 == 1 && hashCount2 == 1) {
+        // Just compare the single hash
+        BRHederaTransactionHash hash1 = hederaTransactionGetHash(t1);
+        BRHederaTransactionHash hash2 = hederaTransactionGetHash(t2);
+        return (0 == memcmp(hash1.bytes, hash2.bytes, sizeof(hash1.bytes)));
+    } else if (hashCount1 == 1) {
+        BRHederaTransactionHash hash = hederaTransactionGetHash(t1);
+        return (1 == findHashInList(&hash, t2->hashes));
+    } else if (hashCount2 == 1) {
+        BRHederaTransactionHash hash = hederaTransactionGetHash(t2);
+        return (1 == findHashInList(&hash, t1->hashes));
+    } else {
+        // Both have multi hash lists - should never happen
+        for (int i = 0; i < hashCount1 - 1; i++) {
+            BRHederaTransactionHash hash1 = hederaTransactionGetHashAtIndex(t1, i);
+            for (int j = 0; j < hashCount2 - 1; j++) {
+                BRHederaTransactionHash hash2 = hederaTransactionGetHashAtIndex(t2, j);
+                if (memcmp(hash1.bytes, hash2.bytes, sizeof(hash1.bytes)) == 0) {
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
 }
 
 extern BRHederaTimeStamp hederaGenerateTimeStamp(void)
@@ -430,4 +466,44 @@ BRHederaTimeStamp hederaParseTimeStamp(const char* transactionID)
 
     free (txID);
     return ts;
+}
+
+int hederaTransactionGetHashCount (BRHederaTransaction transaction) {
+    assert(transaction);
+    if (transaction->hashIsSet) {
+        return 1;
+    } else if (transaction->hashes) {
+        return (int)array_count(transaction->hashes);
+    } else {
+        return 0;
+    }
+}
+
+BRHederaTransactionHash hederaTransactionGetHashAtIndex (BRHederaTransaction transaction, int index) {
+    assert(transaction);
+    assert(index >= 0 && index < NUM_NODES);
+    if (transaction->hashes) {
+        return transaction->hashes[index];
+    } else {
+        return transaction->hash;
+    }
+}
+
+void hederaTransactionUpdateHash (BRHederaTransaction transaction, BRHederaTransactionHash hash) {
+    assert(transaction);
+    // The hash updating ONLY happens once when we have a SENT transaction waiting to find
+    // out which hash was used when submitting - so if we don't have multiple hashes then ignore
+    if (transaction->hashes) {
+        for (int i = 0; i < array_count(transaction->hashes); i++) {
+            if (memcmp(transaction->hashes[i].bytes, hash.bytes, sizeof(hash.bytes)) == 0) {
+                // Copy the real hash into our internal hash value
+                transaction->hash = hash;
+                transaction->hashIsSet = true;
+
+                array_free(transaction->hashes);
+                transaction->hashes = NULL;
+                return; // Found it - updated - cleaned up - DONE
+            }
+        }
+    }
 }

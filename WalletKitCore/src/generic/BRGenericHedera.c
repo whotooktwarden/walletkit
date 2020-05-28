@@ -188,6 +188,24 @@ genericHederaTransferGetSerialization (BRGenericTransferRef transfer, size_t *by
     return hederaTransactionSerialize((BRHederaTransaction) transfer, bytesCount);
 }
 
+static int
+genericHederaTransferIsEqual (BRGenericTransferRef t1, BRGenericTransferRef t2)
+{
+    BRHederaTransaction tx1 = (BRHederaTransaction)t1;
+    BRHederaTransaction tx2 = (BRHederaTransaction)t2;
+    return hederaTransactionHashEqual(tx1, tx2);
+}
+
+static void
+genericHederaUpdateHash (BRGenericTransferRef genericTransfer, BRGenericHash genericHash) {
+    assert(genericTransfer);
+    assert(genericHash.bytesCount == sizeof(BRHederaTransactionHash));
+    BRHederaTransaction transaction = (BRHederaTransaction)genericTransfer;
+    BRHederaTransactionHash hash;
+    memcpy(hash.bytes, genericHash.bytes, sizeof(hash.bytes));
+    hederaTransactionUpdateHash(transaction, hash);
+}
+
 // MARK: Generic Wallet
 
 static BRGenericWalletRef
@@ -478,6 +496,8 @@ struct BRGenericHandersRecord genericHederaHandlersRecord = {
         genericHederaTransferGetFeeBasis,
         genericHederaTransferGetHash,
         genericHederaTransferGetSerialization,
+        genericHederaTransferIsEqual,
+        genericHederaUpdateHash
     },
 
     {   // Wallet

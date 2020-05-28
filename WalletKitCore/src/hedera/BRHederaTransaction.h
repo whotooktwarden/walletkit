@@ -114,9 +114,14 @@ hederaTransactionGetMemo(BRHederaTransaction transaction);
 
 // Check equality
 extern bool hederaTransactionEqual (BRHederaTransaction t1, BRHederaTransaction t2);
+extern bool hederaTransactionHashEqual (BRHederaTransaction t1, BRHederaTransaction t2);
 
 extern BRHederaTimeStamp hederaGenerateTimeStamp(void);
 extern BRHederaTimeStamp hederaParseTimeStamp(const char* txID);
+
+int hederaTransactionGetHashCount (BRHederaTransaction transaction);
+BRHederaTransactionHash hederaTransactionGetHashAtIndex (BRHederaTransaction transaction, int index);
+void hederaTransactionUpdateHash (BRHederaTransaction transaction, BRHederaTransactionHash hash);
 
 #ifdef __cplusplus
 }
