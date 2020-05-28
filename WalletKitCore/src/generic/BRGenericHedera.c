@@ -288,7 +288,6 @@ genericHederaWalletCreateTransfer (BRGenericWalletRef wallet,
                                    BRGenericTransferAttribute *attributes) {
     BRHederaAddress source = hederaWalletGetSourceAddress ((BRHederaWallet) wallet);
     BRHederaUnitTinyBar thbar  = (BRHederaUnitTinyBar) amount.u64[0];
-    BRHederaAddress nodeAddress = hederaWalletGetNodeAddress((BRHederaWallet) wallet);
     BRHederaFeeBasis feeBasis;
     feeBasis.costFactor = (uint32_t)estimatedFeeBasis.costFactor;
     int overflow = 0;
@@ -296,7 +295,7 @@ genericHederaWalletCreateTransfer (BRGenericWalletRef wallet,
     assert(overflow == 0);
 
     BRHederaTransaction transaction = hederaTransactionCreateNew (source, (BRHederaAddress) target,
-                                                           thbar, feeBasis, nodeAddress, NULL);
+                                                           thbar, feeBasis, NULL);
 
     for (size_t index = 0; index < attributesCount; index++) {
         BRGenericTransferAttribute attribute = attributes[index];
@@ -311,7 +310,6 @@ genericHederaWalletCreateTransfer (BRGenericWalletRef wallet,
     }
 
     hederaAddressFree(source);
-    hederaAddressFree(nodeAddress);
 
     return (BRGenericTransferRef) transaction;
 }

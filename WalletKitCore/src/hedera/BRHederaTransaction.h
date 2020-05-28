@@ -36,7 +36,7 @@ typedef struct BRHederaTransactionRecord *BRHederaTransaction;
 extern BRHederaTransaction /* caller owns memory and must call "hederaTransactionFree" function */
 hederaTransactionCreateNew(BRHederaAddress source, BRHederaAddress target,
                            BRHederaUnitTinyBar amount, BRHederaFeeBasis feeBasis,
-                           BRHederaAddress nodeAddress, BRHederaTimeStamp *timeStamp);
+                           BRHederaTimeStamp *timeStamp);
 
 /**
  * Create a Hedera transaction recovered from the blockset server

@@ -26,7 +26,6 @@ struct BRHederaTransactionRecord {
     BRHederaTransactionHash hash;
     bool hashIsSet;
     BRHederaFeeBasis feeBasis;
-    BRHederaAddress nodeAddress;
     BRHederaTimeStamp timeStamp;
     uint64_t blockHeight;
     int error;
@@ -48,7 +47,6 @@ extern BRHederaTransaction hederaTransactionCreateNew (BRHederaAddress source,
                                                        BRHederaAddress target,
                                                        BRHederaUnitTinyBar amount,
                                                        BRHederaFeeBasis feeBasis,
-                                                       BRHederaAddress nodeAddress,
                                                        BRHederaTimeStamp *timeStamp)
 {
     BRHederaTransaction transaction = calloc (1, sizeof(struct BRHederaTransactionRecord));
@@ -57,7 +55,6 @@ extern BRHederaTransaction hederaTransactionCreateNew (BRHederaAddress source,
     transaction->amount = amount;
     transaction->feeBasis = feeBasis;
     transaction->fee = hederaFeeBasisGetFee (&transaction->feeBasis);
-    transaction->nodeAddress = hederaAddressClone (nodeAddress);
     if (timeStamp != NULL) {
         transaction->timeStamp = *timeStamp;
     } else {
@@ -66,9 +63,6 @@ extern BRHederaTransaction hederaTransactionCreateNew (BRHederaAddress source,
         transaction->timeStamp = hederaGenerateTimeStamp();
     }
     transaction->transactionId = createTransactionID(source, transaction->timeStamp);
-    transaction->blockHeight = 0;
-    transaction->error = 0;
-    transaction->hashIsSet = false;
     return transaction;
 }
 
@@ -139,19 +133,16 @@ hederaTransactionClone (BRHederaTransaction transaction)
         memcpy(newTransaction->serializedBytes, transaction->serializedBytes, newTransaction->serializedSize);
     }
 
-    if (transaction->nodeAddress) {
-        newTransaction->nodeAddress = hederaAddressClone(transaction->nodeAddress);
-    }
-
     if (transaction->memo) {
         newTransaction->memo = strdup(transaction->memo);
     }
 
-    // Copy the hashes - I guess
     if (transaction->hashes) {
         array_new(newTransaction->hashes, array_count(transaction->hashes));
         array_add_array(newTransaction->hashes, transaction->hashes, array_count(transaction->hashes));
     }
+
+    newTransaction->hashIsSet = transaction->hashIsSet;
 
     return newTransaction;
 }
@@ -163,7 +154,6 @@ extern void hederaTransactionFree (BRHederaTransaction transaction)
     if (transaction->transactionId) free (transaction->transactionId);
     if (transaction->source) hederaAddressFree (transaction->source);
     if (transaction->target) hederaAddressFree (transaction->target);
-    if (transaction->nodeAddress) hederaAddressFree (transaction->nodeAddress);
     if (transaction->memo) free(transaction->memo);
     if (transaction->hashes) array_free(transaction->hashes);
     free (transaction);
@@ -296,7 +286,9 @@ extern uint8_t * hederaTransactionSerialize (BRHederaTransaction transaction, si
 {
     if (transaction->serializedBytes) {
         *size = transaction->serializedSize;
-        return transaction->serializedBytes;
+        uint8_t * buffer = calloc(1, transaction->serializedSize);
+        memcpy(buffer, transaction->serializedBytes, transaction->serializedSize);
+        return buffer;
     } else {
         *size = 0;
         return NULL;
@@ -500,8 +492,19 @@ void hederaTransactionUpdateHash (BRHederaTransaction transaction, BRHederaTrans
                 transaction->hash = hash;
                 transaction->hashIsSet = true;
 
+                // Don't need the hashes anymore
                 array_free(transaction->hashes);
                 transaction->hashes = NULL;
+
+                // If the hash is being updated then that means the transfer was successful
+                // and the upper layers have matched up this transfer to the correct hash
+                // so we can't send this one again - since it has 10 serializtions it would be
+                // better to clean up that memory
+                if (transaction->serializedBytes != NULL) {
+                    free(transaction->serializedBytes);
+                    transaction->serializedBytes = NULL;
+                    transaction->serializedSize = 0;
+                }
                 return; // Found it - updated - cleaned up - DONE
             }
         }
