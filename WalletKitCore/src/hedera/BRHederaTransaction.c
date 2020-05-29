@@ -12,6 +12,7 @@
 #include <sys/time.h>
 #include <string.h>
 #include "ethereum/util/BRUtilHex.h"
+#include "support/BRInt.h"
 
 #define NUM_NODES 10
 
@@ -217,9 +218,9 @@ hederaTransactionSignMultipleSerializations (BRHederaTransaction transaction, BR
     transaction->serializedSize = 0;
     uint8_t * pSerializedBytes = NULL;
     for (int32_t i = 0; i < NUM_NODES; i++) {
-        int32_t numNumber = i + 3; // Nodes 0 - 2 are not used
+        int32_t nodeNumber = i + 3; // Nodes 0 - 2 are not used
         size_t size = 0;
-        BRHederaAddress node = hederaAddressCreate(0, 0, numNumber);
+        BRHederaAddress node = hederaAddressCreate(0, 0, nodeNumber);
         uint8_t * signedBytes = hederaTransactionSignTransactionWithNode(transaction, publicKey, privateKey,
                                                                          node, fee, &size);
 
@@ -234,19 +235,21 @@ hederaTransactionSignMultipleSerializations (BRHederaTransaction transaction, BR
             // - enough room for NUM_NODES (6 bytes for a header plus serialization)
             // - plus some padding just in case the other serializations are larger - will truncate later
             transaction->serializedBytes = calloc(1, 3 + ((size + 6) * NUM_NODES) + 1024);
+            pSerializedBytes = transaction->serializedBytes;
 
             // Add the header info - version plus the number of serializations
-            transaction->serializedBytes[0] = (uint8_t)1; // Version 1 of the protocol
-            uint16_t numSerializtions = htons(NUM_NODES);
-            memcpy(&transaction->serializedBytes[1], &numSerializtions, 2);
-            pSerializedBytes = transaction->serializedBytes + 3; // Pointer to after the header
+            *pSerializedBytes = (uint8_t)1; // Version 1 of the protocol
+            pSerializedBytes++;
+            UInt16SetBE(pSerializedBytes, NUM_NODES);
+            pSerializedBytes += 2; // Pointer to after the header
         }
-        uint16_t networkNodeNumber = htons(numNumber);
-        uint32_t networkSize = htonl(size);
-        memcpy(pSerializedBytes, &networkNodeNumber, 2);
-        memcpy(pSerializedBytes + 2, &networkSize, 4);
+        // Add the node number, the size of the serialization, then the
+        // serialized bytes for this node
+        UInt16SetBE(pSerializedBytes, nodeNumber);
+        UInt32SetBE(pSerializedBytes + 2, (uint32_t)size);
         memcpy(pSerializedBytes + 6, signedBytes, size);
         pSerializedBytes += (6 + size);
+
         free(signedBytes);
         hederaAddressFree(node);
     }
