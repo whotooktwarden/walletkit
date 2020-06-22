@@ -22,6 +22,7 @@
 #include "support/BRBase58.h"
 #include "BRChainParams.h"
 #include "bcash/BRBCashParams.h"
+#include "bsv/BRBSVParams.h"
 
 #include "support/BRFileService.h"
 #include "ethereum/event/BREvent.h"
@@ -77,13 +78,19 @@ getNetworkName (const BRChainParams *params) {
 
 static const char *
 getCurrencyName (const BRChainParams *params) {
-    if (params->magicNumber == BRMainNetParams->magicNumber ||
-        params->magicNumber == BRTestNetParams->magicNumber)
+    if (params == BRMainNetParams ||
+        params == BRTestNetParams)
         return "btc";
 
-    if (params->magicNumber == BRBCashParams->magicNumber ||
-        params->magicNumber == BRBCashTestNetParams->magicNumber)
+    if (params == BRBCashParams ||
+        params == BRBCashTestNetParams) {
         return "bch";
+    }
+    
+    if (params == BRBSVParams ||
+        params == BRBSVTestNetParams) {
+        return "bsv";
+    }
 
     // this should never happen!
     assert (0);
@@ -1136,6 +1143,7 @@ BRWalletManagerNew (BRWalletManagerClient client,
     size_t txCount = BRWalletTransactions (bwm->wallet, NULL, 0);
     if (txCount) {
         BRArrayOf(BRTransaction *) txns = calloc (txCount, sizeof(BRTransaction*));
+        // Fills txns with direct references to BRWallet transactions; caution warranted.
         BRWalletTransactions (bwm->wallet, txns, txCount);
 
         for (size_t i = 0; i < txCount; i++) {
@@ -1145,7 +1153,7 @@ BRWalletManagerNew (BRWalletManagerClient client,
             BRTransactionWithState txnWithState = BRWalletManagerAddTransaction (bwm,
                                                                                  BRTransactionCopy (txns[i]),
                                                                                  txns[i]);
-            if (BRWalletTransactionIsResolved (bwm->wallet, txns[i]))
+            if (BRWalletTransactionIsResolved (bwm->wallet, txnWithState->ownedTransaction))
                 BRTransactionWithStateSetResolved (txnWithState);
 
             if (txnWithState->isResolved)
@@ -1215,6 +1223,11 @@ BRWalletManagerGetWallet (BRWalletManager manager) {
 extern int
 BRWalletManagerHandlesBTC (BRWalletManager manager) {
     return BRChainParamsIsBitcoin (manager->chainParams);
+}
+
+extern int
+BRWalletManagerHandlesBCH (BRWalletManager manager) {
+    return BRChainParamsIsBitcash (manager->chainParams);
 }
 
 extern void
@@ -1718,10 +1731,15 @@ bwmGenerateAddedEvents (BRWalletManager manager,
     });
 }
 
+static void _IsResolvedTxnWithStateAssert (int check) { assert (check); }
+
 extern void
 bwmHandleTxAdded (BRWalletManager manager,
                   OwnershipGiven BRTransaction *ownedTransaction,
                   OwnershipKept BRTransaction *refedTransaction) {
+    // RefedTransaction and OwnTransaction are guaranteed identical; don't access the
+    // content of refedTransaction; it is OwnershipKept and could be gone by now.
+
     pthread_mutex_lock (&manager->lock);
     int needEvents = 1;
 
@@ -1730,7 +1748,7 @@ bwmHandleTxAdded (BRWalletManager manager,
     if (NULL == txnWithState) {
         // first we've seen it, so it came from the network; add it to our list
         txnWithState = BRWalletManagerAddTransaction (manager, ownedTransaction, refedTransaction);
-        if (BRWalletTransactionIsResolved (manager->wallet, refedTransaction)) {
+        if (BRWalletTransactionIsResolved (manager->wallet, txnWithState->ownedTransaction)) {
             BRTransactionWithStateSetResolved (txnWithState);
         }
     } else {
@@ -1748,9 +1766,12 @@ bwmHandleTxAdded (BRWalletManager manager,
         // we already have an owned copy of this transaction; free up the passed one
         BRTransactionFree (ownedTransaction);
     }
-    assert (NULL != txnWithState);
+    _IsResolvedTxnWithStateAssert (NULL != txnWithState);
 
-    if (BRWalletTransactionIsResolved (manager->wallet, refedTransaction))
+    // Check 'IsResolved' based on the 'old' ownedTransaction; resolution does not depend on
+    // any fields that might have changed in the ownedTransaction argument to this function.  Thus
+    // is is okay to use `txnWithState->ownedTransaction`
+    if (BRWalletTransactionIsResolved (manager->wallet, txnWithState->ownedTransaction))
         BRTransactionWithStateSetResolved (txnWithState);
 
     // Find other transactions that are now resolved.
@@ -1762,7 +1783,12 @@ bwmHandleTxAdded (BRWalletManager manager,
 
     for (size_t index = 0; index < transactionsCount; index++) {
         BRTransactionWithState txnWithState  = manager->transactions[index];
-        uint8_t nowResolved = BRWalletTransactionIsResolved (manager->wallet, txnWithState->refedTransaction);
+        // The manager->transactions list contains transactions that have been created but not
+        // signed.  Such transactions are in BRWalletManager but are not in BRWallet; thus they
+        // cannot possibly be resolved themselves or participate in resolving other transactions.
+        //
+        // BRWalletTransactionIsResolved() will return `false` for unsigned transactions.
+        uint8_t nowResolved = BRWalletTransactionIsResolved (manager->wallet, txnWithState->ownedTransaction);
 
         if (!txnWithState->isResolved && nowResolved) {
             BRTransactionWithStateSetResolved (txnWithState);
@@ -2113,13 +2139,15 @@ bwmAnnounceTransaction (BRWalletManager manager,
                         OwnershipKept uint8_t *transaction,
                         size_t transactionLength,
                         uint64_t timestamp,
-                        uint64_t blockHeight) {
+                        uint64_t blockHeight,
+                        uint8_t  error) {
     bwmSignalAnnounceTransaction (manager,
                                   id,
                                   transaction,
                                   transactionLength,
                                   timestamp,
-                                  blockHeight);
+                                  blockHeight,
+                                  error);
     return 1;
 }
 
@@ -2172,7 +2200,8 @@ bwmHandleAnnounceTransaction (BRWalletManager manager,
                               OwnershipKept uint8_t *transaction,
                               size_t transactionLength,
                               uint64_t timestamp,
-                              uint64_t blockHeight) {
+                              uint64_t blockHeight,
+                              uint8_t  error) {
     assert (eventHandlerIsCurrentThread (manager->handler));
 
     pthread_mutex_lock (&manager->lock);
@@ -2181,7 +2210,8 @@ bwmHandleAnnounceTransaction (BRWalletManager manager,
                                               transaction,
                                               transactionLength,
                                               timestamp,
-                                              blockHeight);
+                                              blockHeight,
+                                              error);
     pthread_mutex_unlock (&manager->lock);
     return 1;
 }

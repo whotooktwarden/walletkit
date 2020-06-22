@@ -17,10 +17,13 @@
 
 #include "support/BRArray.h"
 #include "support/BRAddress.h"
+#include "bcash/BRBCashParams.h"
 #include "bcash/BRBCashAddr.h"
 
 #include "BRSyncManager.h"
 #include "BRPeerManager.h"
+
+#include "BRCryptoBase.h"
 
 /// MARK: - Common Decls & Defs
 
@@ -246,7 +249,8 @@ BRClientSyncManagerAnnounceGetTransactionsItem (BRClientSyncManager manager,
                                                 OwnershipKept uint8_t *transaction,
                                                 size_t transactionLength,
                                                 uint64_t timestamp,
-                                                uint64_t blockHeight);
+                                                uint64_t blockHeight,
+                                                uint8_t  error);
 
 static void
 BRClientSyncManagerAnnounceGetTransactionsDone (BRClientSyncManager manager,
@@ -741,7 +745,8 @@ BRSyncManagerAnnounceGetTransactionsItem(BRSyncManager manager,
                                          OwnershipKept uint8_t *transaction,
                                          size_t transactionLength,
                                          uint64_t timestamp,
-                                         uint64_t blockHeight) {
+                                         uint64_t blockHeight,
+                                         uint8_t  error) {
     switch (manager->mode) {
         case CRYPTO_SYNC_MODE_API_ONLY:
         BRClientSyncManagerAnnounceGetTransactionsItem (BRSyncManagerAsClientSyncManager (manager),
@@ -749,7 +754,8 @@ BRSyncManagerAnnounceGetTransactionsItem(BRSyncManager manager,
                                                         transaction,
                                                         transactionLength,
                                                         timestamp,
-                                                        blockHeight);
+                                                        blockHeight,
+                                                        error);
         break;
         case CRYPTO_SYNC_MODE_P2P_ONLY:
         // this might occur if the owning BRWalletManager changed modes; silently ignore
@@ -1180,10 +1186,16 @@ BRClientSyncManagerAnnounceGetTransactionsItem (BRClientSyncManager manager,
                                                 OwnershipKept uint8_t *txn,
                                                 size_t txnLength,
                                                 uint64_t timestamp,
-                                                uint64_t blockHeight) {
+                                                uint64_t blockHeight,
+                                                uint8_t  error) {
     BRTransaction *transaction = BRTransactionParse (txn, txnLength);
-    uint8_t needRegistration = NULL != transaction && BRTransactionIsSigned (transaction);
+    uint8_t needRegistration = !error && NULL != transaction && BRTransactionIsSigned (transaction);
     uint8_t needFree = 1;
+
+    // Convert from `uint64_t` to `uint32_t` with a bit of care regarding BLOCK_HEIGHT_UNBOUND
+    // and TX_UNCONFIRMED - they are directly coercible but be explicit about it.
+    uint32_t btcBlockHeight = (BLOCK_HEIGHT_UNBOUND == blockHeight ? TX_UNCONFIRMED : (uint32_t) blockHeight);
+    uint32_t btcTimestamp   = (uint32_t) timestamp;
 
     if (needRegistration) {
         if (0 == pthread_mutex_lock (&manager->lock)) {
@@ -1210,11 +1222,25 @@ BRClientSyncManagerAnnounceGetTransactionsItem (BRClientSyncManager manager,
     // does not know about the tranaction then the subsequent BRWalletUpdateTransactions will
     // free the transaction (with BRTransactionFree()).
     if (BRWalletContainsTransaction (manager->wallet, transaction)) {
-        BRWalletUpdateTransactions (manager->wallet, &transaction->txHash, 1, (uint32_t) blockHeight, (uint32_t) timestamp);
+        if (error) {
+            // On an error, remove the transaction.  This will cascade through BRWallet callbacks
+            // to produce `balanceUpdated` and `txDeleted`.  The later will be handled by removing
+            // a BRTransactionWithState from the BRWalletManager.
+            BRWalletRemoveTransaction (manager->wallet, transaction->txHash);
+        }
+        else {
+            // If the transaction has transitioned from 'included' back to 'submitted' (like when
+            // there is a blockchain reord), the blockHeight will be TX_UNCONFIRMED and the
+            // timestamp will be 0.  This will cascade through BRWallet callbacks to produce
+            // 'balanceUpdated' and 'txUpdated'.
+            //
+            // If no longer 'included' this might cause dependent transactions to go to 'invalid'.
+            BRWalletUpdateTransactions (manager->wallet, &transaction->txHash, 1, btcBlockHeight, btcTimestamp);
+        }
     }
 
     // Free if ownership hasn't been passed
-   if (needFree) {
+    if (needFree) {
         BRTransactionFree (transaction);
     }
 }
@@ -1229,8 +1255,8 @@ BRClientSyncManagerConvertAddressToString (BRClientSyncManager manager,
 
     BRArrayOf(char *) addressesAsString = NULL;
 
-    // For BTC, simply extract the BRAddress' string
-    if (BRChainParamsIsBitcoin (manager->chainParams)) {
+    // For BTC/BSV, simply extract the BRAddress' string
+    if (0 == BRChainParamsIsBitcash (manager->chainParams)) {
         array_new(addressesAsString, addressesCount);
         array_set_count(addressesAsString, addressesCount);
 
@@ -1424,6 +1450,12 @@ BRClientSyncManagerUpdateTransactions (BRClientSyncManager manager) {
     }
 
     if (needClientCall) {
+        // We'll force the 'client' to return all transactions w/o regard to the `endBlockNumber`
+        // Doing this ensures that the initial 'full-sync' returns everything.  Thus there is no
+        // need to wait for a future 'tick tock' to get the recent and pending transactions'.  For
+        // BTC the future 'tick tock' is minutes away; which is a burden on Users as they wait.
+        endBlockNumber = BLOCK_HEIGHT_UNBOUND;
+
         // Callback to 'client' to get all transactions (for all wallet addresses) between
         // a {beg,end}BlockNumber.  The client will gather the transactions and then call
         // bwmAnnounceTransaction()  (for each one or with all of them).

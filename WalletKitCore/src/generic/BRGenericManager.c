@@ -181,7 +181,9 @@ fileServiceTypeTransferV1Reader (BRFileServiceContext context,
                                                             strFee,
                                                             timestamp,
                                                             blockHeight,
-                                                            GENERIC_TRANSFER_STATE_ERRORED == state.type);
+                                                            GENERIC_TRANSFER_STATE_ERRORED == state.type ||
+                                                            (GENERIC_TRANSFER_STATE_INCLUDED == state.type
+                                                             && CRYPTO_FALSE == state.u.included.success));
 
     // Set the transfer's `state` and `attributes` from the read values.  For`state`, this will
     // overwrite what `genManagerRecoverTransfer()` assigned but will be correct with the saved
@@ -503,6 +505,24 @@ genManagerSubmitTransfer (BRGenericManager gwm,
     free (tx);
 }
 
+extern BRGenericTransferState
+genManagerRecoverTransferState (BRGenericManager gwm,
+                                uint64_t timestamp,
+                                uint64_t blockHeight,
+                                BRGenericFeeBasis feeBasis,
+                                BRCryptoBoolean error) {
+    return (blockHeight == BLOCK_HEIGHT_UNBOUND && CRYPTO_TRUE == error
+            ? genTransferStateCreateOther (GENERIC_TRANSFER_STATE_ERRORED)
+            : (blockHeight == BLOCK_HEIGHT_UNBOUND
+               ? genTransferStateCreateOther(GENERIC_TRANSFER_STATE_SUBMITTED)
+               : genTransferStateCreateIncluded (blockHeight,
+                                                 GENERIC_TRANSFER_TRANSACTION_INDEX_UNKNOWN,
+                                                 timestamp,
+                                                 feeBasis,
+                                                 error,
+                                                 NULL)));
+}
+
 extern BRGenericTransfer
 genManagerRecoverTransfer (BRGenericManager gwm,
                            BRGenericWallet wallet,
@@ -534,13 +554,12 @@ genManagerRecoverTransfer (BRGenericManager gwm,
                               ? GENERIC_TRANSFER_SENT
                               : GENERIC_TRANSFER_RECEIVED));
 
-    genTransferSetState (transfer,
-                         genTransferStateCreateIncluded (blockHeight,
-                                                         GENERIC_TRANSFER_TRANSACTION_INDEX_UNKNOWN,
-                                                         timestamp,
-                                                         feeBasis,
-                                                         0 == error,
-                                                         NULL));
+    BRGenericTransferState transferState = genManagerRecoverTransferState (gwm,
+                                                                           timestamp,
+                                                                           blockHeight,
+                                                                           feeBasis,
+                                                                           AS_CRYPTO_BOOLEAN (0 == error));
+    genTransferSetState (transfer, transferState);
 
     genAddressRelease (source);
     genAddressRelease (target);
@@ -560,13 +579,14 @@ genManagerRecoverTransfersFromRawTransaction (BRGenericManager gwm,
     array_new (transfers, array_count(refs));
     for (size_t index = 0; index < array_count(refs); index++) {
         BRGenericTransfer transfer = genTransferAllocAndInit (gwm->handlers->type, refs[index]);
-        genTransferSetState (transfer,
-                             genTransferStateCreateIncluded (blockHeight,
-                                                             GENERIC_TRANSFER_TRANSACTION_INDEX_UNKNOWN,
-                                                             timestamp,
-                                                             genTransferGetFeeBasis (transfer),
-                                                             0 == error,
-                                                             NULL));
+        BRGenericFeeBasis feeBasis = genTransferGetFeeBasis (transfer);
+        BRGenericTransferState transferState = genManagerRecoverTransferState (gwm,
+                                                                               timestamp,
+                                                                               blockHeight,
+                                                                               feeBasis,
+                                                                               AS_CRYPTO_BOOLEAN (0 == error));
+        genTransferSetState (transfer, transferState);
+
         array_add (transfers, transfer);
     }
     pthread_mutex_unlock (&gwm->lock);
@@ -633,6 +653,9 @@ genManagerPeriodicDispatcher (BREventHandler handler,
         // 3b) Query all transactions; each one found will have bwmAnnounceTransaction() invoked
         // which will process the transaction into the wallet.
 
+        // Force an unbounded 'GET' to ensure that every query provides all transactions.
+        uint64_t endBlockNumber = BLOCK_HEIGHT_UNBOUND;  // gwm->brdSync.endBlockNumber
+
         // Callback to 'client' to get all transactions (for all wallet addresses) between
         // a {beg,end}BlockNumber.  The client will gather the transactions and then call
         // bwmAnnounceTransaction()  (for each one or with all of them).
@@ -641,14 +664,14 @@ genManagerPeriodicDispatcher (BREventHandler handler,
                                       gwm,
                                       address,
                                       gwm->brdSync.begBlockNumber,
-                                      gwm->brdSync.endBlockNumber,
+                                      endBlockNumber,
                                       gwm->brdSync.rid);
         } else {
             gwm->client.getTransactions (gwm->client.context,
                                          gwm,
                                          address,
                                          gwm->brdSync.begBlockNumber,
-                                         gwm->brdSync.endBlockNumber,
+                                         endBlockNumber,
                                          gwm->brdSync.rid);
         }
 
