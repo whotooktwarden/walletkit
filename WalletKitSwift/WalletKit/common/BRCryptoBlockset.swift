@@ -62,11 +62,13 @@ public class BlocksetSystemClient: SystemClient {
     /// Base URL (String) for BRD API Services
     let apiBaseURL: String
 
+    let useETHProxy: Bool
+
     // The session to use for DataTaskFunc as in `session.dataTask (with: request, ...)`.
     let session = URLSession (configuration: .default)
 
     /// A DispatchQueue Used for certain queries that can't be accomplished in the session's data
-    /// task.  Such as when multiple request are needed in getTransactions().
+    /// task.  Such as when multiple request are needed in getTransactions().  A serial queue.
     let queue = DispatchQueue.init(label: "BlocksetSystemClient")
 
     /// A function type that decorates a `request`, handles 'challenges', performs decrypting and/or
@@ -89,7 +91,7 @@ public class BlocksetSystemClient: SystemClient {
     }
 
     ///
-    /// A Subscription allows for BlockchainDB 'Asynchronous Notifications'.
+    /// A Subscription allows for BlocksetSystemClient 'Asynchronous Notifications'.
     ///
 //    public struct Subscription {
 //
@@ -100,7 +102,7 @@ public class BlocksetSystemClient: SystemClient {
 //        public let deviceId: String
 //
 //        ///
-//        /// An endpoint definition allowing the BlockchainDB to 'target' this App.  Allows
+//        /// An endpoint definition allowing the BlocksetSystemClient to 'target' this App.  Allows
 //        /// for APNS, FCM and other notification systems.  This is an optional value; when set to
 //        /// .none, any existing notification will be disabled
 //        ///
@@ -155,7 +157,7 @@ public class BlocksetSystemClient: SystemClient {
 
             if let model = self.modelSubscription {
                 // If the subscription included an endpoint, then put the subscription on the
-                // blockchainDB - via POST or PUT.
+                // BlocksetSystemClient - via POST or PUT.
                 self.getSubscription (id: model.id) { (subRes: Result<SystemClient.Subscription, SystemClientError>) in
                     switch subRes {
                     case let .success (subscription):
@@ -200,13 +202,16 @@ public class BlocksetSystemClient: SystemClient {
     public init (bdbBaseURL: String = "https://api.blockset.com",
                  bdbDataTaskFunc: DataTaskFunc? = nil,
                  apiBaseURL: String = "https://api.breadwallet.com",
-                 apiDataTaskFunc: DataTaskFunc? = nil) {
+                 apiDataTaskFunc: DataTaskFunc? = nil,
+                 useETHProxy: Bool = false) {
 
         self.bdbBaseURL = bdbBaseURL
         self.apiBaseURL = apiBaseURL
 
         self.bdbDataTaskFunc = bdbDataTaskFunc ?? BlocksetSystemClient.defaultDataTaskFunc
         self.apiDataTaskFunc = apiDataTaskFunc ?? BlocksetSystemClient.defaultDataTaskFunc
+
+        self.useETHProxy = useETHProxy
     }
 
     // this token has no expiration - testing only.
@@ -862,6 +867,17 @@ public class BlocksetSystemClient: SystemClient {
                                  maxPageSize: Int? = nil,
                                  completion: @escaping (Result<[SystemClient.Transaction], SystemClientError>) -> Void) {
         precondition(!addresses.isEmpty, "Empty `addresses`")
+        guard !useETHProxy
+        else {
+            precondition(1 == addresses.count)
+            getTransactionsUsingETHProxy(blockchainId: blockchainId,
+                                         address: addresses[0],
+                                         begBlockNumber: begBlockNumber,
+                                         endBlockNumber: endBlockNumber,
+                                         completion: completion)
+            return
+        }
+
         let chunkedAddresses = canonicalAddresses(addresses, blockchainId)
             .chunked(into: BlocksetSystemClient.ADDRESS_COUNT)
 
@@ -1670,3 +1686,323 @@ public class BlocksetSystemClient: SystemClient {
         }
     }
 }
+
+#if true
+extension BlocksetSystemClient {
+    public struct ETH {
+        public typealias Transaction = (
+            hash: String,
+            sourceAddr: String,
+            targetAddr: String,
+            contractAddr: String,
+            amount: String,
+            gasLimit: String,
+            gasPrice: String,
+            data: String,
+            nonce: String,
+            gasUsed: String,
+            blockNumber: String,
+            blockHash: String,
+            blockConfirmations: String,
+            blockTransactionIndex: String,
+            blockTimestamp: String,
+            isError: String)
+
+        static internal func asTransaction (json: JSON) -> ETH.Transaction? {
+            guard let hash = json.asString(name: "hash"),
+                  let sourceAddr   = json.asString(name: "from"),
+                  let targetAddr   = json.asString(name: "to"),
+                  let contractAddr = json.asString(name: "contractAddress"),
+                  let amount       = json.asString(name: "value"),
+                  let gasLimit     = json.asString(name: "gas"),
+                  let gasPrice     = json.asString(name: "gasPrice"),
+                  let data         = json.asString(name: "input"),
+                  let nonce        = json.asString(name: "nonce"),
+                  let gasUsed      = json.asString(name: "gasUsed"),
+                  let blockNumber  = json.asString(name: "blockNumber"),
+                  let blockHash    = json.asString(name: "blockHash"),
+                  let blockConfirmations    = json.asString(name: "confirmations"),
+                  let blockTransactionIndex = json.asString(name: "transactionIndex"),
+                  let blockTimestamp        = json.asString(name: "timeStamp"),
+                  let isError      = json.asString(name: "isError")
+            else { return nil }
+
+            return (hash: hash,
+                    sourceAddr: sourceAddr, targetAddr: targetAddr, contractAddr: contractAddr,
+                    amount: amount, gasLimit: gasLimit, gasPrice: gasPrice,
+                    data: data, nonce: nonce, gasUsed: gasUsed,
+                    blockNumber: blockNumber, blockHash: blockHash,
+                    blockConfirmations: blockConfirmations, blockTransactionIndex: blockTransactionIndex, blockTimestamp: blockTimestamp,
+                    isError: isError)
+        }
+
+        public typealias Log = (
+            hash: String,
+            contract: String,
+            topics: [String],
+            data: String,
+            gasPrice: String,
+            gasUsed: String,
+            logIndex: String,
+            blockNumber: String,
+            blockTransactionIndex: String,
+            blockTimestamp: String)
+
+        // BRD API servcies *always* appends `topics` with ""; we need to axe that.
+        static internal func dropLastIfEmpty (_ strings: [String]?) -> [String]? {
+            return (nil != strings && !strings!.isEmpty && "" == strings!.last!
+                        ? strings!.dropLast()
+                        : strings)
+        }
+
+        static internal func asLog (json: JSON) -> ETH.Log? {
+            guard let hash = json.asString(name: "transactionHash"),
+                  let contract    = json.asString(name: "address"),
+                  let topics      = dropLastIfEmpty (json.asStringArray (name: "topics")),
+                  let data        = json.asString(name: "data"),
+                  let gasPrice    = json.asString(name: "gasPrice"),
+                  let gasUsed     = json.asString(name: "gasUsed"),
+                  let logIndex    = json.asString(name: "logIndex"),
+                  let blockNumber = json.asString(name: "blockNumber"),
+                  let blockTransactionIndex = json.asString(name: "transactionIndex"),
+                  let blockTimestamp        = json.asString(name: "timeStamp")
+            else { return nil }
+
+            return (hash: hash, contract: contract, topics: topics, data: data,
+                    gasPrice: gasPrice, gasUsed: gasUsed,
+                    logIndex: logIndex,
+                    blockNumber: blockNumber, blockTransactionIndex: blockTransactionIndex, blockTimestamp: blockTimestamp)
+        }
+
+//        public typealias Token = (
+//            address: String,
+//            symbol: String,
+//            name: String,
+//            description: String,
+//            decimals: UInt32,
+//            defaultGasLimit: String?,
+//            defaultGasPrice: String?)
+//
+//        static internal func asToken (json: JSON) -> ETH.Token? {
+//            guard let name   = json.asString(name: "name"),
+//                  let symbol   = json.asString(name: "code"),
+//                  let address  = json.asString(name: "contract_address"),
+//                  let decimals = json.asUInt8(name: "scale")
+//            else { return nil }
+//
+//            let description = "Token for '\(symbol)'"
+//
+//            return (address: address, symbol: symbol, name: name, description: description,
+//                    decimals: UInt32(decimals),
+//                    defaultGasLimit: nil,
+//                    defaultGasPrice: nil)
+//        }
+    }
+
+    public func getTransactionsAsETH (network: String,
+                                      address: String,
+                                      begBlockNumber: UInt64,
+                                      endBlockNumber: UInt64,
+                                      completion: @escaping (Result<[ETH.Transaction],SystemClientError>) -> Void) {
+        let json: JSON.Dict = [
+            "account" : address,
+            "id"      : 1 ] //  ridIncr ]
+
+        let queryDict = [
+            "module"    : "account",
+            "action"    : "txlist",
+            "address"   : address,
+            "startBlock": begBlockNumber.description,
+            "endBlock"  : endBlockNumber.description
+        ]
+
+        apiMakeRequestQUERY (network: network, query: zip (Array(queryDict.keys), Array(queryDict.values)), data: json) {
+            (res: Result<JSON, SystemClientError>) in
+
+            completion (res.flatMap {
+                (json: JSON) -> Result<[ETH.Transaction], SystemClientError> in
+                guard let _ = json.asString (name: "status"),
+                      let   _ = json.asString (name: "message"),
+                      let   result  = json.asArray (name:  "result")
+                else { return Result.failure(SystemClientError.model("Missed {status, message, result")) }
+
+                let transactions = result.map { ETH.asTransaction (json: JSON (dict: $0)) }
+
+                return transactions.contains(where: { nil == $0 })
+                    ? Result.failure (SystemClientError.model ("ETH.Transaction parse error"))
+                    : Result.success (transactions as! [ETH.Transaction])
+            })
+        }
+    }
+
+    public func getLogsAsETH (network: String,
+                              contract: String?,
+                              address: String,
+                              event: String,
+                              begBlockNumber: UInt64,
+                              endBlockNumber: UInt64,
+                              completion: @escaping (Result<[ETH.Log],SystemClientError>) -> Void) {
+        let json: JSON.Dict = [ "id" : 1] // ridIncr ]
+
+        var queryDict = [
+            "module"    : "logs",
+            "action"    : "getLogs",
+            "fromBlock" : begBlockNumber.description,
+            "toBlock"   : endBlockNumber.description,
+            "topic0"    : event,
+            "topic1"    : address,
+            "topic_1_2_opr" : "or",
+            "topic2"    : address
+        ]
+        if nil != contract { queryDict["address"] = contract! }
+
+        apiMakeRequestQUERY (network: network, query: zip (Array(queryDict.keys), Array(queryDict.values)), data: json) {
+            (res: Result<JSON, SystemClientError>) in
+
+            completion (res.flatMap {
+                (json: JSON) -> Result<[ETH.Log], SystemClientError> in
+                guard let _ = json.asString (name: "status"),
+                      let   _ = json.asString (name: "message"),
+                      let   result  = json.asArray (name:  "result")
+                else { return Result.failure(SystemClientError.model("Missed {status, message, result")) }
+
+                let logs = result.map { ETH.asLog (json: JSON (dict: $0)) }
+
+                return logs.contains(where: { nil == $0 })
+                    ? Result.failure (SystemClientError.model ("ETH.Log parse error"))
+                    : Result.success (logs as! [ETH.Log])
+            })
+        }
+    }
+
+//    public func getTokensAsETH (completion: @escaping (Result<[ETH.Token],SystemClientError>) -> Void) {
+//
+//        // Everything returned by BRD must/absolutely-must be in BlocksetSystemClient currencies.  Thus,
+//        // when stubbed, so too must these.
+//        apiMakeRequestTOKEN () { (res: Result<[JSON.Dict], SystemClientError>) in
+//            completion (res
+//                                .flatMap { (jsonArray: [JSON.Dict]) -> Result<[ETH.Token], SystemClientError> in
+//                                    let tokens = jsonArray.map { ETH.asToken (json: JSON (dict: $0)) }
+//
+//                                    return tokens.contains(where: { nil == $0 })
+//                                        ? Result.failure (SystemClientError.model ("ETH.Tokens parse error"))
+//                                        : Result.success (tokens as! [ETH.Token])
+//                                })
+//        }
+//    }
+
+    func getTransactionsUsingETHProxy (blockchainId: String,
+                                       address: String,
+                                       begBlockNumber: UInt64? = nil,
+                                       endBlockNumber: UInt64? = nil,
+                                       completion: @escaping (Result<[SystemClient.Transaction], SystemClientError>) -> Void) {
+
+        var resTransactions: Result<[ETH.Transaction],SystemClientError>? = nil
+        var resLogs:         Result<[ETH.Log],SystemClientError>?         = nil
+
+        func processTransactions () -> Void {
+            // Executes within queue.sync{}
+            if case let .some (resTransactions) = resTransactions,
+               case let .some (resLogs) = resLogs {
+
+                guard case let .success (ethTransactions) = resTransactions,
+                      case let .success (ethLogs) = resLogs
+                else {
+                    if case let .failure (error) = resTransactions {
+                        completion (Result.failure(error))
+                    }
+                    else if case let .failure (error) = resLogs {
+                        completion (Result.failure(error))
+                    }
+                    return
+                }
+
+                // Process ethTransactions and ethLogs into SystemClient.Transaction
+                var transactions: [SystemClient.Transaction] = []
+
+                // TODO:  Combine ethTransacions+ethLogs => transactions.
+
+                completion (Result.success(transactions))
+            }
+        }
+
+        func handleETHTransactions (res: Result<[ETH.Transaction],SystemClientError>) -> Void {
+            queue.sync {
+                resTransactions = res
+                processTransactions()
+            }
+        }
+
+        func handleETHLogs (res: Result<[ETH.Log],SystemClientError>) -> Void {
+            queue.sync {
+                resLogs = res
+                processTransactions()
+            }
+
+        }
+
+        // TODO: Fix all of these
+        let network = "mainnet"
+        let begBlockNumber = begBlockNumber ?? 0
+        let endBlockNumber = endBlockNumber ?? 20_000_000
+        let event = "event"
+
+        getTransactionsAsETH (network: network,
+                              address: address,
+                              begBlockNumber: begBlockNumber,
+                              endBlockNumber: endBlockNumber,
+                              completion: handleETHTransactions)
+
+        getLogsAsETH (network: network,
+                      contract: nil,
+                      address: address,
+                      event: event,
+                      begBlockNumber: begBlockNumber,
+                      endBlockNumber: endBlockNumber,
+                      completion: handleETHLogs)
+    }
+
+    private func apiGetNetworkName (_ name: String) -> String {
+        let name = name.lowercased()
+        return name == "testnet" ? "ropsten" : name
+    }
+
+    internal func apiMakeRequestJSON (network: String,
+                                      data: JSON.Dict,
+                                      completion: @escaping (Result<JSON, SystemClientError>) -> Void) {
+        let path = "/ethq/\(apiGetNetworkName(network))/proxy"
+        makeRequest (apiDataTaskFunc, apiBaseURL,
+                     path: path,
+                     query: nil,
+                     data: data,
+                     httpMethod: "POST") { (res: Result<JSON.Dict, SystemClientError>) in
+            completion (res.map { JSON (dict: $0) })
+        }
+    }
+
+    internal func apiMakeRequestQUERY (network: String,
+                                       query: Zip2Sequence<[String],[String]>?,
+                                       data: JSON.Dict,
+                                       completion: @escaping (Result<JSON, SystemClientError>) -> Void) {
+        let path = "/ethq/\(apiGetNetworkName(network))/query"
+        makeRequest (apiDataTaskFunc, apiBaseURL,
+                     path: path,
+                     query: query,
+                     data: data,
+                     httpMethod: "POST") { (res: Result<JSON.Dict, SystemClientError>) in
+            completion (res.map { JSON (dict: $0) })
+        }
+    }
+
+//    internal func apiMakeRequestTOKEN (completion: @escaping (Result<[JSON.Dict], SystemClientError>) -> Void) {
+//        let path = "/currencies"
+//        makeRequest (apiDataTaskFunc, apiBaseURL,
+//                     path: path,
+//                     query: zip(["type"], ["erc20"]),
+//                     data: nil,
+//                     httpMethod: "GET",
+//                     completion: completion)
+//    }
+
+}
+#endif
