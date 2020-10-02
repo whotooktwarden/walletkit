@@ -633,6 +633,164 @@ cryptoNetworkEventTypeString (BRCryptoNetworkEventType type) {
     return names [type];
 }
 
+// MARK: - RLP Coding
+
+private_extern BRRlpItem
+cryptoBlockChainTypeRLPEncode (BRCryptoBlockChainType type,
+                               BRRlpCoder coder) {
+    return rlpEncodeUInt64 (coder, (uint64_t) type, 0);
+}
+
+private_extern BRCryptoBlockChainType
+cryptoBlockChainTypeRLPDecode (BRRlpItem item,
+                               BRRlpCoder coder) {
+    return (BRCryptoBlockChainType) rlpDecodeUInt64 (coder, item, 0);
+}
+
+private_extern BRRlpItem
+cryptoNetworkRLPEncodeAddress (BRCryptoNetwork network,
+                               BRCryptoAddress address,
+                               BRRlpCoder coder) {
+    char *string = cryptoAddressAsString (address);
+    BRRlpItem item = rlpEncodeString (coder, string);
+    free (string);
+
+    return item;
+}
+
+private_extern BRCryptoAddress
+cryptoNetworkRLPDecodeAddress (BRCryptoNetwork network,
+                               BRRlpItem item,
+                               BRRlpCoder coder) {
+    char *string = rlpDecodeString (coder, item);
+    BRCryptoAddress address = cryptoNetworkCreateAddress (network, string);
+    free (string);
+
+    return address;
+}
+
+private_extern BRRlpItem
+cryptoNetworkRLPEncodeFeeBasis (BRCryptoNetwork network,
+                                BRCryptoFeeBasis feeBasis,
+                                BRRlpCoder coder) {
+    BRCryptoUnit unit = cryptoFeeBasisGetUnit (feeBasis);
+    const BRRlpItem item = NULL;
+
+    BRRlpItem result = rlpEncodeList2 (coder,
+                                       cryptoNetworkRLPEncodeUnit(network, unit, coder),
+                                       item);
+
+    cryptoUnitGive (unit);
+    // item
+
+    return result;
+}
+
+private_extern BRCryptoFeeBasis
+cryptoNetworkRLPDecodeFeeBasis (BRCryptoNetwork network,
+                                BRRlpItem item,
+                                BRRlpCoder coder) {
+    size_t itemsCount = 0;
+    const BRRlpItem *items = rlpDecodeList(coder, item, &itemsCount);
+    assert (3 == itemsCount);
+
+    BRCryptoUnit unit = cryptoNetworkRLPDecodeUnit (network, items[0], coder);
+    BRRlpItem    spec = items[1];
+
+    // decode it
+
+    BRCryptoFeeBasis feeBasis = NULL;
+
+    cryptoUnitGive (unit);
+
+    return feeBasis;
+}
+
+private_extern BRRlpItem
+cryptoNetworkRLPEncodeAmmount (BRCryptoNetwork network,
+                               BRCryptoAmount amount,
+                               BRRlpCoder coder) {
+    BRCryptoUnit unit  = cryptoAmountGetUnit  (amount);
+    UInt256      value = cryptoAmountGetValue (amount);
+    bool         neg   = CRYPTO_TRUE == cryptoAmountIsNegative(amount);
+
+    BRRlpItem item = rlpEncodeList (coder, 3,
+                                    cryptoNetworkRLPEncodeUnit (network, unit, coder),
+                                    rlpEncodeUInt256 (coder, value, 0),
+                                    rlpEncodeUInt64 (coder, neg, 0));
+
+    cryptoUnitGive (unit);
+    return item;
+}
+
+private_extern BRCryptoAmount
+cryptoNetworkRLPDecodeAmount (BRCryptoNetwork network,
+                              BRRlpItem item,
+                              BRRlpCoder coder) {
+    size_t itemsCount = 0;
+    const BRRlpItem *items = rlpDecodeList(coder, item, &itemsCount);
+    assert (3 == itemsCount);
+
+    BRCryptoUnit unit  = cryptoNetworkRLPDecodeUnit (network, items[0], coder);
+    UInt256      value = rlpDecodeUInt256 (coder, items[1], 0);
+    bool         neg   = rlpDecodeUInt64  (coder, items[2], 0);
+
+    BRCryptoAmount amount = cryptoAmountCreate (unit, AS_CRYPTO_BOOLEAN(neg), value);
+
+    cryptoUnitGive (unit);
+    return amount;
+}
+
+private_extern BRRlpItem
+cryptoNetworkRLPEncodeCurrency (BRCryptoNetwork network,
+                                BRCryptoCurrency currency,
+                                BRRlpCoder coder) {
+    return rlpEncodeString (coder, cryptoCurrencyGetUids(currency));
+}
+
+private_extern BRCryptoCurrency
+cryptoNetworkRLPDecodeCurrency (BRCryptoNetwork network,
+                                BRRlpItem item,
+                                BRRlpCoder coder) {
+    char *uids = rlpDecodeString (coder, item);
+    BRCryptoCurrency currency = cryptoNetworkGetCurrencyForUids (network, uids);
+    free (uids);
+
+    return currency;
+}
+
+private_extern BRRlpItem
+cryptoNetworkRLPEncodeUnit (BRCryptoNetwork network,
+                            BRCryptoUnit unit,
+                            BRRlpCoder coder) {
+    return rlpEncodeString (coder, cryptoUnitGetUids(unit));
+}
+
+private_extern BRCryptoUnit
+cryptoNetworkRLPDecodeUnit (BRCryptoNetwork network,
+                            BRRlpItem item,
+                            BRRlpCoder coder) {
+    char *uids = rlpDecodeString (coder, item);
+    BRCryptoUnit result = NULL;
+
+    // The unit-uids is "<currency-uids>:<code>".  So look for a currency with a uids that is a
+    // prefix to `uids` (the unit uids).  Can then look though that currency's units.
+    for (size_t cid = 0; cid < array_count(network->associations); cid++) {
+        BRCryptoCurrencyAssociation association = network->associations[cid];
+        if (strcmp (uids, cryptoCurrencyGetUids(association.currency)) >= 0)
+            for (size_t uid = 0; uid < array_count(association.units); uid++) {
+                if (strcmp (uids, cryptoUnitGetUids(association.units[uid])) == 0) {
+                    result = cryptoUnitTake (association.units[uid]);
+                    goto done;
+                }
+            }
+    }
+
+done:
+    free (uids);
+    return result;
+}
+
 // MARK: - Network Defaults
 
 extern BRCryptoNetwork *

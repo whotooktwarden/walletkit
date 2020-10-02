@@ -65,6 +65,8 @@ cryptoFeeBasisAllocAndInit (size_t sizeInBytes,
 private_extern BRCryptoBlockChainType
 cryptoFeeBasisGetType (BRCryptoFeeBasis feeBasis);
 
+private_extern BRCryptoUnit
+cryptoFeeBasisGetUnit (BRCryptoFeeBasis feeBasis);
 
 #ifdef __cplusplus
 }

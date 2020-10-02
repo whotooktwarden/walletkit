@@ -14,6 +14,7 @@
 #include <pthread.h>
 #include <stdbool.h>
 
+#include "support/rlp/BRRlp.h"
 #include "support/BRArray.h"
 #include "BRCryptoBaseP.h"
 #include "BRCryptoHashP.h"
@@ -220,6 +221,66 @@ cryptoNetworkGenerateEvent (BRCryptoNetwork network,
                             BRCryptoNetworkEvent event) {
     cryptoListenerGenerateNetworkEvent (&network->listener, network, event);
 }
+
+// MARK: - RLP Coding
+
+private_extern BRRlpItem
+cryptoBlockChainTypeRLPEncode (BRCryptoBlockChainType type,
+                               BRRlpCoder coder);
+
+private_extern BRCryptoBlockChainType
+cryptoBlockChainTypeRLPDecode (BRRlpItem item,
+                               BRRlpCoder coder);
+
+private_extern BRRlpItem
+cryptoNetworkRLPEncodeAddress (BRCryptoNetwork network,
+                               BRCryptoAddress address,
+                               BRRlpCoder coder);
+
+private_extern BRCryptoAddress
+cryptoNetworkRLPDecodeAddress (BRCryptoNetwork network,
+                               BRRlpItem item,
+                               BRRlpCoder coder);
+
+private_extern BRRlpItem
+cryptoNetworkRLPEncodeFeeBasis (BRCryptoNetwork network,
+                                BRCryptoFeeBasis feeBasis,
+                                BRRlpCoder coder);
+
+private_extern BRCryptoFeeBasis
+cryptoNetworkRLPDecodeFeeBasis (BRCryptoNetwork network,
+                                BRRlpItem item,
+                                BRRlpCoder coder);
+
+private_extern BRRlpItem
+cryptoNetworkRLPEncodeAmmount (BRCryptoNetwork network,
+                               BRCryptoAmount amount,
+                               BRRlpCoder coder);
+
+private_extern BRCryptoAmount
+cryptoNetworkRLPDecodeAmount (BRCryptoNetwork network,
+                              BRRlpItem item,
+                              BRRlpCoder coder);
+
+private_extern BRRlpItem
+cryptoNetworkRLPEncodeCurrency (BRCryptoNetwork network,
+                                BRCryptoCurrency currency,
+                                BRRlpCoder coder);
+
+private_extern BRCryptoCurrency
+cryptoNetworkRLPDecodeCurrency (BRCryptoNetwork network,
+                                BRRlpItem item,
+                                BRRlpCoder coder);
+
+private_extern BRRlpItem
+cryptoNetworkRLPEncodeUnit (BRCryptoNetwork network,
+                            BRCryptoUnit unit,
+                            BRRlpCoder coder);
+
+private_extern BRCryptoUnit
+cryptoNetworkRLPDecodeUnit (BRCryptoNetwork network,
+                            BRRlpItem item,
+                            BRRlpCoder coder);
 
 #ifdef __cplusplus
 }

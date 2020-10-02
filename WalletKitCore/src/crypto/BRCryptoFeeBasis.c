@@ -53,6 +53,11 @@ cryptoFeeBasisGetType (BRCryptoFeeBasis feeBasis) {
     return feeBasis->type;
 }
 
+private_extern BRCryptoUnit
+cryptoFeeBasisGetUnit (BRCryptoFeeBasis feeBasis) {
+    return cryptoUnitTake (feeBasis->unit);
+}
+
 extern BRCryptoAmount
 cryptoFeeBasisGetPricePerCostFactor (BRCryptoFeeBasis feeBasis) {
     return feeBasis->handlers->getPricePerCostFactor (feeBasis);
