@@ -51,16 +51,6 @@ cryptoWalletManagerFileServiceErrorHandler (BRFileServiceContext context,
                                             BRFileService fs,
                                             BRFileServiceError error);
 
-#ifdef REFACTOR
-static void
-cryptoWalletManagerSyncCallbackGEN (BRGenericManagerSyncContext context,
-                                    BRGenericManager manager,
-                                    uint64_t begBlockHeight,
-                                    uint64_t endBlockHeight,
-                                    uint64_t fullSyncIncrement);
-#endif
-
-
 IMPLEMENT_CRYPTO_GIVE_TAKE (BRCryptoWalletManager, cryptoWalletManager)
 
 /// =============================================================================================
@@ -288,159 +278,6 @@ cryptoWalletManagerCreate (BRCryptoWalletManagerListener listener,
     cryptoWalletManagerStart (manager);
 
     return manager;
-    
-#ifdef REFACTOR
-    switch (cwm->type) {
-        case BLOCK_CHAIN_TYPE_BTC: {
-            BRWalletManagerClient client = cryptoWalletManagerClientCreateBTCClient (cwm);
-
-            // Create BWM - will also create the BWM primary wallet....
-            cwm->u.btc = BRWalletManagerNew (client,
-                                             cryptoAccountAsBTC (account),
-                                             cryptoNetworkAsBTC (network),
-                                             (uint32_t) cryptoAccountGetTimestamp(account),
-                                             mode,
-                                             cwmPath,
-                                             cryptoNetworkGetHeight(network),
-                                             cryptoNetworkGetConfirmationsUntilFinal (network));
-            if (NULL == cwm->u.btc) { error = true; break ; }
-
-            // ... get the CWM primary wallet in place...
-            cwm->wallet = cryptoWalletCreateAsBTC (unit, unit, cwm->u.btc, BRWalletManagerGetWallet (cwm->u.btc));
-
-            // ... add the CWM primary wallet to CWM
-            cryptoWalletManagerAddWallet (cwm, cwm->wallet);
-
-            // ... and finally start the BWM event handling (with CWM fully in place).
-            BRWalletManagerStart (cwm->u.btc);
-
-            break;
-        }
-
-        case BLOCK_CHAIN_TYPE_ETH: {
-            BREthereumClient client = cryptoWalletManagerClientCreateETHClient (cwm);
-
-            // Create EWM - will also create the EWM primary wallet....
-            cwm->u.eth = ewmCreate (cryptoNetworkAsETH(network),
-                                    cryptoAccountAsETH(account),
-                                    (BREthereumTimestamp) cryptoAccountGetTimestamp(account),
-                                    mode,
-                                    client,
-                                    cwmPath,
-                                    cryptoNetworkGetHeight(network),
-                                    cryptoNetworkGetConfirmationsUntilFinal (network));
-            if (NULL == cwm->u.eth) { error = true; break; }
-
-            // ... get the CWM primary wallet in place...
-            cwm->wallet = cryptoWalletCreateAsETH (unit, unit, cwm->u.eth, ewmGetWallet(cwm->u.eth));
-
-            // ... add the CWM primary wallet to CWM
-            cryptoWalletManagerAddWallet (cwm, cwm->wallet);
-
-            // ... and finally start the EWM event handling (with CWM fully in place).
-            ewmStart (cwm->u.eth);
-
-            // This will install ERC20 Tokens for the CWM Currencies.  Corresponding Wallets are
-            // not created for these currencies.
-            cryptoWalletManagerInstallETHTokensForCurrencies(cwm);
-
-            // We finish here with possibly EWM events in the EWM handler queue and/or with
-            // CWM events in the CWM handler queue.
-
-            break;
-        }
-
-        case BLOCK_CHAIN_TYPE_GEN: {
-#define GEN_DISPATCHER_PERIOD       (10)        // related to block proccessing
-
-            pthread_mutex_lock (&cwm->lock);
-            BRGenericClient client = cryptoWalletManagerClientCreateGENClient (cwm);
-
-            // Create CWM as 'GEN' based on the network's base currency.
-            BRCryptoNetworkCanonicalType type = cryptoNetworkGetCanonicalType (network);
-
-            cwm->u.gen = genManagerCreate (client,
-                                           type,
-                                           cryptoNetworkAsGEN (network),
-                                           cryptoAccountAsGEN (account, type),
-                                           cryptoAccountGetTimestamp(account),
-                                           cwmPath,
-                                           GEN_DISPATCHER_PERIOD,
-                                           cwm,
-                                           cryptoWalletManagerSyncCallbackGEN,
-                                           cryptoNetworkGetHeight(network));
-            if (NULL == cwm->u.gen) {
-                pthread_mutex_unlock (&cwm->lock);
-                error = true;
-                break; }
-
-            // ... and create the primary wallet
-            cwm->wallet = cryptoWalletCreateAsGEN (unit, unit, genManagerGetPrimaryWallet (cwm->u.gen));
-
-            // ... and add the primary wallet to the wallet manager...
-            cryptoWalletManagerAddWallet (cwm, cwm->wallet);
-
-            pthread_mutex_unlock (&cwm->lock);
-
-            // Announce the new wallet manager;
-            cwm->listener.walletManagerEventCallback (cwm->listener.context,
-                                                      cryptoWalletManagerTake (cwm),
-                                                      (BRCryptoWalletManagerEvent) {
-                                                          CRYPTO_WALLET_MANAGER_EVENT_CREATED
-                                                      });
-
-            // ... and announce the created wallet.
-            cwm->listener.walletEventCallback (cwm->listener.context,
-                                               cryptoWalletManagerTake (cwm),
-                                               cryptoWalletTake (cwm->wallet),
-                                               (BRCryptoWalletEvent) {
-                                                   CRYPTO_WALLET_EVENT_CREATED
-                                               });
-
-            // ... and announce the manager's new wallet.
-            cwm->listener.walletManagerEventCallback (cwm->listener.context,
-                                                      cryptoWalletManagerTake (cwm),
-                                                      (BRCryptoWalletManagerEvent) {
-                                                          CRYPTO_WALLET_MANAGER_EVENT_WALLET_ADDED,
-                                                          { .wallet = { cryptoWalletTake (cwm->wallet) }}
-                                                      });
-            pthread_mutex_lock (&cwm->lock);
-
-            // Load transfers from persistent storage
-            BRArrayOf(BRGenericTransfer) transfers = genManagerLoadTransfers (cwm->u.gen);
-            for (size_t index = 0; index < array_count (transfers); index++) {
-                // TODO: A BRGenericTransfer must allow us to determine the Wallet (via a Currency).
-                cryptoWalletManagerHandleTransferGENFilter (cwm, transfers[index], CRYPTO_FALSE);
-            }
-            array_free (transfers);
-
-            // Having added the transfers, get the wallet balance...
-            BRCryptoAmount balance = cryptoWalletGetBalance (cwm->wallet);
-            pthread_mutex_unlock (&cwm->lock);
-
-            // ... and announce the balance
-            cwm->listener.walletEventCallback (cwm->listener.context,
-                                               cryptoWalletManagerTake (cwm),
-                                               cryptoWalletTake (cwm->wallet),
-                                               (BRCryptoWalletEvent) {
-                                                   CRYPTO_WALLET_EVENT_BALANCE_UPDATED,
-                                                   { .balanceUpdated = { balance }}
-                                               });
-            break;
-        }
-    }
-
-    if (error) {
-        cryptoWalletManagerGive (manager);
-        manager = NULL;
-    }
-
-    cryptoUnitGive(unit);
-    cryptoCurrencyGive(currency);
-
-    return manager;
-
-    #endif
 }
 
 #define _peer_log_x printf
@@ -866,37 +703,7 @@ cryptoWalletManagerWipe (BRCryptoNetwork network,
     fileServiceWipe (path, currencyName, networkName);
 }
 
-// MARK: - Gen Stuff
-
-#ifdef REFACTOR
-static BRCryptoTransferState
-cryptoTransferStateCreateGEN (BRGenericTransferState generic,
-                              BRCryptoUnit feeUnit) { // feeUnit already taken
-    switch (generic.type) {
-        case GENERIC_TRANSFER_STATE_CREATED:
-            return cryptoTransferStateInit(CRYPTO_TRANSFER_STATE_CREATED);
-        case GENERIC_TRANSFER_STATE_SIGNED:
-            return cryptoTransferStateInit(CRYPTO_TRANSFER_STATE_SIGNED);
-        case GENERIC_TRANSFER_STATE_SUBMITTED:
-            return cryptoTransferStateInit(CRYPTO_TRANSFER_STATE_SUBMITTED);
-        case GENERIC_TRANSFER_STATE_INCLUDED: {
-            BRCryptoFeeBasis      basis = cryptoFeeBasisCreateAsGEN (feeUnit, generic.u.included.feeBasis);
-            BRCryptoTransferState state = cryptoTransferStateIncludedInit (generic.u.included.blockNumber,
-                                                                           generic.u.included.transactionIndex,
-                                                                           generic.u.included.timestamp,
-                                                                           basis,
-                                                                           generic.u.included.success,
-                                                                           generic.u.included.error);
-            cryptoFeeBasisGive (basis);
-            return state;
-        }
-        case GENERIC_TRANSFER_STATE_ERRORED:
-            return cryptoTransferStateErroredInit (cryptoTransferSubmitErrorUnknown());
-        case GENERIC_TRANSFER_STATE_DELETED:
-            return cryptoTransferStateInit(CRYPTO_TRANSFER_STATE_SIGNED);
-    }
-}
-#endif
+// MARK: - Create Transfer
 
 private_extern void
 cryptoWalletManagerSetTransferState (BRCryptoWalletManager cwm,
@@ -951,19 +758,10 @@ cryptoWalletManagerCreateTransfer (BRCryptoWalletManager cwm,
                                    BRCryptoFeeBasis estimatedFeeBasis,
                                    size_t attributesCount,
                                    OwnershipKept BRCryptoTransferAttribute *attributes) {
-    BRCryptoTransfer transfer = cryptoWalletCreateTransfer (wallet, target, amount,
-                                                            estimatedFeeBasis,
-                                                            attributesCount,
-                                                            attributes);
-
-#if 0
-    if (NULL != transfer)
-        cryptoWalletManagerGenerateTransferEvent (cwm, wallet, transfer,
-                                                  (BRCryptoTransferEvent) {
-            CRYPTO_TRANSFER_EVENT_CREATED
-        });
-#endif
-    return transfer;
+    return cryptoWalletCreateTransfer (wallet, target, amount,
+                                       estimatedFeeBasis,
+                                       attributesCount,
+                                       attributes);
 }
 
 extern BRCryptoTransfer
@@ -972,17 +770,10 @@ cryptoWalletManagerCreateTransferMultiple (BRCryptoWalletManager cwm,
                                            size_t outputsCount,
                                            BRCryptoTransferOutput *outputs,
                                            BRCryptoFeeBasis estimatedFeeBasis) {
-    BRCryptoTransfer transfer = cryptoWalletCreateTransferMultiple (wallet, outputsCount, outputs, estimatedFeeBasis);
-
-#if 0
-    cryptoWalletManagerGenerateTransferEvent (cwm, wallet, transfer,
-                                              (BRCryptoTransferEvent) {
-        CRYPTO_TRANSFER_EVENT_CREATED
-    });
-#endif
-    return transfer;
+    return cryptoWalletCreateTransferMultiple (wallet, outputsCount, outputs, estimatedFeeBasis);
 }
 
+// MARK: - Sign/Submit
 
 extern BRCryptoBoolean
 cryptoWalletManagerSign (BRCryptoWalletManager manager,
@@ -1059,6 +850,8 @@ cryptoWalletManagerSubmitForKey (BRCryptoWalletManager manager,
         cryptoWalletManagerSubmitSigned (manager, wallet, transfer);
 }
 
+// MARK: - Estimate Limit/Fee
+
 extern BRCryptoAmount
 cryptoWalletManagerEstimateLimit (BRCryptoWalletManager manager,
                                   BRCryptoWallet  wallet,
@@ -1088,112 +881,6 @@ cryptoWalletManagerEstimateLimit (BRCryptoWalletManager manager,
 
     cryptoUnitGive (unit);
     return limit;
-
-#ifdef REFACTOR
-    switch (wallet->type) {
-        case BLOCK_CHAIN_TYPE_BTC: {
-            BRWallet *wid = wallet->u.btc.wid;
-
-            // Amount may be zero if insufficient fees
-            *isZeroIfInsuffientFunds = CRYPTO_TRUE;
-
-            // NOTE: We know BTC/BCH has a minimum balance of zero.
-
-            uint64_t balance     = BRWalletBalance (wid);
-            uint64_t feePerKB    = 1000 * cryptoNetworkFeeAsBTC (fee);
-            uint64_t amountInSAT = (CRYPTO_FALSE == asMaximum
-                                    ? BRWalletMinOutputAmountWithFeePerKb (wid, feePerKB)
-                                    : BRWalletMaxOutputAmountWithFeePerKb (wid, feePerKB));
-            uint64_t fee         = (amountInSAT > 0
-                                    ? BRWalletFeeForTxAmountWithFeePerKb (wid, feePerKB, amountInSAT)
-                                    : 0);
-
-//            if (CRYPTO_TRUE == asMaximum)
-//                assert (balance == amountInSAT + fee);
-
-            if (amountInSAT + fee > balance)
-                amountInSAT = 0;
-
-            amount = uint256Create(amountInSAT);
-            break;
-        }
-
-        case BLOCK_CHAIN_TYPE_ETH: {
-            BREthereumEWM ewm = wallet->u.eth.ewm;
-            BREthereumWallet wid = wallet->u.eth.wid;
-
-            // We always need an estimate as we do not know the fees.
-            *needEstimate = CRYPTO_TRUE;
-
-            if (CRYPTO_FALSE == asMaximum)
-                amount = uint256Create(0);
-            else {
-                BREthereumAmount ethAmount = ewmWalletGetBalance (ewm, wid);
-
-                // NOTE: We know ETH has a minimum balance of zero.
-
-                amount = (AMOUNT_ETHER == ethAmountGetType(ethAmount)
-                          ? ethAmountGetEther(ethAmount).valueInWEI
-                          : ethAmountGetTokenQuantity(ethAmount).valueAsInteger);
-            }
-            break;
-        }
-
-        case BLOCK_CHAIN_TYPE_GEN: {
-            // TODO: Probably, unfortunately, the need for an estimate is likely currency dependent.
-            *needEstimate = CRYPTO_FALSE;
-
-            if (CRYPTO_FALSE == asMaximum)
-                amount = uint256Create(0);
-            else {
-                int negative = 0, overflow = 0;
-
-                // Get the balance
-                BRCryptoBoolean balanceIsNegative;
-                UInt256 balance = genWalletGetBalance (wallet->u.gen, &balanceIsNegative);
-                if (CRYPTO_TRUE == balanceIsNegative)
-                    balance = UINT256_ZERO;
-
-                // We are looking for the maximum amount; check if the wallet has a minimum
-                // balance.  If so, reduce the above balance.
-                BRCryptoBoolean hasMinimum = CRYPTO_FALSE;
-                UInt256 balanceMinimum = genWalletGetBalanceLimit (wallet->u.gen, CRYPTO_FALSE, &hasMinimum);
-
-                if (CRYPTO_TRUE == hasMinimum) {
-                    balance = uint256Sub_Negative(balance, balanceMinimum, &negative);
-                    if (negative) balance = UINT256_ZERO;
-                }
-
-                // Get the pricePerCostFactor for the (network) fee.
-                BRCryptoAmount pricePerCostFactor = cryptoNetworkFeeGetPricePerCostFactor (fee);
-                
-                // Get a feeBasis using some sketchy defaults
-                BRGenericAddress address   = genWalletGetAddress (wallet->u.gen);
-                BRGenericFeeBasis feeBasis = genWalletEstimateTransferFee (wallet->u.gen,
-                                                                           address,
-                                                                           balance,
-                                                                           cryptoAmountGetValue(pricePerCostFactor));
-
-                // Finally, compute the fee.
-                UInt256 fee = genFeeBasisGetFee (&feeBasis, &overflow);
-                assert (!overflow);
-
-                amount = uint256Sub_Negative (balance, fee, &negative);
-                if (negative) amount = UINT256_ZERO;
-
-                genAddressRelease(address);
-                cryptoAmountGive(pricePerCostFactor);
-
-            }
-            break;
-        }
-    }
-
-    return cryptoAmountCreateInternal (unit,
-                                       CRYPTO_FALSE,
-                                       amount,
-                                       0);
-#endif
 }
 
 
@@ -1221,6 +908,30 @@ cryptoWalletManagerEstimateFeeBasis (BRCryptoWalletManager manager,
         });
 }
 
+extern void
+cryptoWalletManagerEstimateFeeBasisForPaymentProtocolRequest (BRCryptoWalletManager cwm,
+                                                              BRCryptoWallet wallet,
+                                                              BRCryptoCookie cookie,
+                                                              BRCryptoPaymentProtocolRequest request,
+                                                              BRCryptoNetworkFee fee) {
+    const BRCryptoPaymentProtocolHandlers * paymentHandlers = cryptoHandlersLookup(cryptoWalletGetType(wallet))->payment;
+
+    assert (NULL != paymentHandlers);
+
+    BRCryptoFeeBasis feeBasis = paymentHandlers->estimateFeeBasis (request,
+                                                                   cwm,
+                                                                   wallet,
+                                                                   cookie,
+                                                                   fee);
+    if (NULL != feeBasis)
+        cryptoWalletGenerateEvent (wallet, (BRCryptoWalletEvent) {
+            CRYPTO_WALLET_EVENT_FEE_BASIS_ESTIMATED,
+            { .feeBasisEstimated = { CRYPTO_SUCCESS, cookie, feeBasis }} // feeBasis passed
+        });
+}
+
+// MARK: - Sweeper
+
 extern BRCryptoWalletSweeperStatus
 cryptoWalletManagerWalletSweeperValidateSupported (BRCryptoWalletManager cwm,
                                                    BRCryptoWallet wallet,
@@ -1245,28 +956,6 @@ cryptoWalletManagerCreateWalletSweeper (BRCryptoWalletManager cwm,
     return cwm->handlers->createSweeper (cwm,
                                          wallet,
                                          key);
-}
-
-extern void
-cryptoWalletManagerEstimateFeeBasisForPaymentProtocolRequest (BRCryptoWalletManager cwm,
-                                                              BRCryptoWallet wallet,
-                                                              BRCryptoCookie cookie,
-                                                              BRCryptoPaymentProtocolRequest request,
-                                                              BRCryptoNetworkFee fee) {
-    const BRCryptoPaymentProtocolHandlers * paymentHandlers = cryptoHandlersLookup(cryptoWalletGetType(wallet))->payment;
-    
-    assert (NULL != paymentHandlers);
-    
-    BRCryptoFeeBasis feeBasis = paymentHandlers->estimateFeeBasis (request,
-                                                                   cwm,
-                                                                   wallet,
-                                                                   cookie,
-                                                                   fee);
-    if (NULL != feeBasis)
-        cryptoWalletGenerateEvent (wallet, (BRCryptoWalletEvent) {
-            CRYPTO_WALLET_EVENT_FEE_BASIS_ESTIMATED,
-            { .feeBasisEstimated = { CRYPTO_SUCCESS, cookie, feeBasis }} // feeBasis passed
-        });
 }
 
 #ifdef REFACTOR
@@ -1842,15 +1531,17 @@ cryptoWalletManagerRecoverTransferFromTransferBundle (BRCryptoWalletManager cwm,
 }
 
 private_extern BRCryptoFeeBasis
-cryptoWalletManagerRecoverFeeBasisFromEstimate (BRCryptoWalletManager cwm,
-                                                BRCryptoNetworkFee networkFee,
-                                                double costUnits,
-                                                size_t attributesCount,
-                                                OwnershipKept const char **attributeKeys,
-                                                OwnershipKept const char **attributeVals) {
+cryptoWalletManagerRecoverFeeBasisFromFeeEstimate (BRCryptoWalletManager cwm,
+                                                   BRCryptoNetworkFee networkFee,
+                                                   BRCryptoFeeBasis initialFeeBasis,
+                                                   double costUnits,
+                                                   size_t attributesCount,
+                                                   OwnershipKept const char **attributeKeys,
+                                                   OwnershipKept const char **attributeVals) {
     assert (NULL != cwm->handlers->recoverFeeBasisFromFeeEstimate); // not supported by chain
     return cwm->handlers->recoverFeeBasisFromFeeEstimate (cwm,
                                                           networkFee,
+                                                          initialFeeBasis,
                                                           costUnits,
                                                           attributesCount,
                                                           attributeKeys,

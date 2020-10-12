@@ -342,9 +342,17 @@ cryptoTransferGetConfirmedFeeBasis (BRCryptoTransfer transfer) {
 private_extern BRCryptoAmount
 cryptoTransferGetConfirmedFee (BRCryptoTransfer transfer) {
     // TODO: NULL on unit vs unitForFee mismatch?
-    return (CRYPTO_TRANSFER_STATE_INCLUDED == transfer->state.type
+    return ((CRYPTO_TRANSFER_STATE_INCLUDED == transfer->state.type &&
+             NULL != transfer->state.u.included.feeBasis)
             ? cryptoFeeBasisGetFee (transfer->state.u.included.feeBasis)
             : NULL);
+}
+
+private_extern BRCryptoFeeBasis
+cryptoTransferGetFeeBasis (BRCryptoTransfer transfer) {
+    return cryptoFeeBasisTake (CRYPTO_TRANSFER_STATE_INCLUDED == transfer->state.type
+                               ? transfer->state.u.included.feeBasis
+                               : transfer->feeBasisEstimated);
 }
 
 extern BRCryptoAmount
@@ -370,9 +378,11 @@ cryptoTransferSerializeForSubmission (BRCryptoTransfer transfer,
 extern uint8_t *
 cryptoTransferSerializeForFeeEstimation (BRCryptoTransfer transfer,
                                          BRCryptoNetwork  network,
-                                         size_t *serializationCount) {
-    assert (NULL != serializationCount);
-    return transfer->handlers->serialize (transfer, network, CRYPTO_FALSE, serializationCount);
+                                         size_t *bytesCount) {
+    assert (NULL != bytesCount);
+    return (NULL != transfer->handlers->getBytesForFeeEstimate
+            ? transfer->handlers->getBytesForFeeEstimate (transfer, network, bytesCount)
+            : transfer->handlers->serialize (transfer, network, CRYPTO_FALSE, bytesCount));
 }
 
 extern BRCryptoBoolean

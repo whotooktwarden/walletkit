@@ -52,6 +52,11 @@ typedef uint8_t *
                                      BRCryptoBoolean  requireSignature,
                                      size_t *serializationCount);
 
+typedef uint8_t *
+(*BRCryptoTransferGetBytesForFeeEstimateHandler) (BRCryptoTransfer transfer,
+                                                  BRCryptoNetwork  network,
+                                                  size_t *bytesCount);
+
 typedef int // 1 if equal, 0 if not
 (*BRCryptoTransferIsEqualHandler) (BRCryptoTransfer t1,
                                    BRCryptoTransfer t2);
@@ -60,6 +65,7 @@ typedef struct {
     BRCryptoTransferReleaseHandler release;
     BRCryptoTransferGetHashHandler getHash;
     BRCryptoTransferSerializeHandler serialize;
+    BRCryptoTransferGetBytesForFeeEstimateHandler getBytesForFeeEstimate;
     BRCryptoTransferIsEqualHandler isEqual;
 } BRCryptoTransferHandlers;
 
@@ -141,6 +147,9 @@ cryptoTransferGetEstimatedFee (BRCryptoTransfer transfer);
 
 private_extern BRCryptoAmount
 cryptoTransferGetConfirmedFee (BRCryptoTransfer transfer);
+
+private_extern BRCryptoFeeBasis
+cryptoTransferGetFeeBasis (BRCryptoTransfer transfer);
 
 #ifdef __cplusplus
 }

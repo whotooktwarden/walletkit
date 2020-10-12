@@ -115,6 +115,7 @@ cryptoWalletValidateTransferAttributeETH (BRCryptoWallet wallet,
     return (BRCryptoTransferAttributeValidationError) 0;
 }
 
+/** An Ethereum transaction's data depends on if the transfer is for ETH or ERC20 */
 static char *
 cryptoTransferProvideOriginatingData (BREthereumTransferBasisType type,
                                       BREthereumAddress targetAddress,
@@ -137,10 +138,12 @@ cryptoTransferProvideOriginatingData (BREthereumTransferBasisType type,
         }
 
         case TRANSFER_BASIS_EXCHANGE:
+            assert (false);
             return NULL;
     }
 }
 
+/** An Ethereum transaction's target address depends on if the transfer is for ETH or ERC20 */
 static BREthereumAddress
 cryptoTransferProvideOriginatingTargetAddress (BREthereumTransferBasisType type,
                                                BREthereumAddress targetAddress,
@@ -151,11 +154,12 @@ cryptoTransferProvideOriginatingTargetAddress (BREthereumTransferBasisType type,
         case TRANSFER_BASIS_LOG:
             return ethTokenGetAddressRaw (token);
         case TRANSFER_BASIS_EXCHANGE:
-            assert (0);
+            assert (false);
             return EMPTY_ADDRESS_INIT;
     }
 }
 
+/** An Ethereum transaction's amount depends on if the transfer is for ETH or ERC20 */
 static BREthereumEther
 cryptoTransferProvideOriginatingAmount (BREthereumTransferBasisType type,
                                         UInt256 value) {
@@ -165,30 +169,11 @@ cryptoTransferProvideOriginatingAmount (BREthereumTransferBasisType type,
         case TRANSFER_BASIS_LOG:
             return ethEtherCreateZero ();
         case TRANSFER_BASIS_EXCHANGE:
-            assert (0);
+            assert (false);
             return ethEtherCreateZero();
     }
 }
 
-#if 0
-static void
-transferProvideOriginatingTransaction (BREthereumTransfer transfer) {
-    if (NULL != transfer->originatingTransaction)
-        transactionRelease (transfer->originatingTransaction);
-
-    char *data = transferProvideOriginatingTransactionData(transfer);
-
-    transfer->originatingTransaction =
-    transactionCreate (transfer->sourceAddress,
-                       transferProvideOriginatingTransactionTargetAddress (transfer),
-                       transferProvideOriginatingTransactionAmount (transfer),
-                       ethFeeBasisGetGasPrice(transfer->feeBasis),
-                       ethFeeBasisGetGasLimit(transfer->feeBasis),
-                       data,
-                       TRANSACTION_NONCE_IS_NOT_ASSIGNED);
-    free (data);
-}
-#endif
 extern BRCryptoTransfer
 cryptoWalletCreateTransferETH (BRCryptoWallet  wallet,
                                BRCryptoAddress target,
@@ -205,7 +190,6 @@ cryptoWalletCreateTransferETH (BRCryptoWallet  wallet,
 
     BREthereumToken    ethToken         = walletETH->ethToken;
     BREthereumFeeBasis ethFeeBasis      = cryptoFeeBasisAsETH (estimatedFeeBasis);
-
     BREthereumAddress  ethSourceAddress = ethAccountGetPrimaryAddress (walletETH->ethAccount);
     BREthereumAddress  ethTargetAddress = cryptoAddressAsETH (target);
 
@@ -214,12 +198,16 @@ cryptoWalletCreateTransferETH (BRCryptoWallet  wallet,
     UInt256 value = cryptoAmountGetValue (amount);
     char   *data  = cryptoTransferProvideOriginatingData (type, ethTargetAddress, value);
 
+    // When creating an BREthereumTransaction, we'll apply margin to the gasLimit in `ethFeeBasis`.
+    // This helps to ensure that the transaction will be accepted into the blockchain rather than
+    // be rejected with 'not enough gas'.  We apply this no matter the transaction type, for ETH or
+    // TOK.  With an ETH transaction the target address might be a 'Smart Contract'.
     BREthereumTransaction ethTransaction =
     transactionCreate (ethSourceAddress,
                        cryptoTransferProvideOriginatingTargetAddress (type, ethTargetAddress, ethToken),
                        cryptoTransferProvideOriginatingAmount (type, value),
                        ethFeeBasisGetGasPrice(ethFeeBasis),
-                       ethFeeBasisGetGasLimit(ethFeeBasis),
+                       gasApplyLimitMargin (ethFeeBasisGetGasLimit(ethFeeBasis)),
                        data,
                        TRANSACTION_NONCE_IS_NOT_ASSIGNED);
 
@@ -232,6 +220,8 @@ cryptoWalletCreateTransferETH (BRCryptoWallet  wallet,
     BRCryptoAddress  source   = cryptoAddressCreateAsETH  (ethSourceAddress);
 
     BRCryptoTransferState transferState = { CRYPTO_TRANSFER_STATE_CREATED };
+
+    // We don't/can't create TRANSFER_BASIS_EXCHANGE.
     BREthereumTransferBasis basis = (NULL == ethToken
                                      ? ((BREthereumTransferBasis) { TRANSFER_BASIS_TRANSACTION })
                                      : ((BREthereumTransferBasis) { TRANSFER_BASIS_LOG }));
@@ -239,7 +229,7 @@ cryptoWalletCreateTransferETH (BRCryptoWallet  wallet,
     BRCryptoTransfer transfer = cryptoTransferCreateAsETH (wallet->listenerTransfer,
                                                            unit,
                                                            unitForFee,
-                                                           estimatedFeeBasis,
+                                                           estimatedFeeBasis,  // w/o margin
                                                            amount,
                                                            direction,
                                                            source,
@@ -248,12 +238,7 @@ cryptoWalletCreateTransferETH (BRCryptoWallet  wallet,
                                                            walletETH->ethAccount,
                                                            basis,
                                                            ethTransaction);
-#if 0
-    transfer->sourceAddress = cryptoAddressCreateAsETH (ethSourceAddress);
-    transfer->targetAddress = cryptoAddressCreateAsETH (ethTargetAddress);
-    transfer->feeBasisEstimated = cryptoFeeBasisCreateAsETH (unitForFee, transactionGetFeeBasisLimit(ethTransaction));
-#endif
-    
+
     if (NULL != transfer && attributesCount > 0)
         cryptoTransferSetAttributes (transfer, attributesCount, attributes);
 
@@ -317,95 +302,6 @@ static bool
 cryptoWalletIsEqualETH (BRCryptoWallet wb1, BRCryptoWallet wb2) {
     return wb1 == wb2;
 }
-
-
-#ifdef REFACTOR
-private_extern void
-walletUpdateBalance (BREthereumWallet wallet) {
-    int overflow = 0, negative = 0, fee_overflow = 0;
-
-    UInt256 recv = UINT256_ZERO;
-    UInt256 sent = UINT256_ZERO;
-    UInt256 fees = UINT256_ZERO;
-
-    for (size_t index = 0; index < array_count (wallet->transfers); index++) {
-        BREthereumTransfer transfer = wallet->transfers[index];
-        BREthereumAmount   amount = transferGetAmount(transfer);
-        assert (ethAmountGetType(wallet->balance) == ethAmountGetType(amount));
-        UInt256 value = (AMOUNT_ETHER == ethAmountGetType(amount)
-                         ? ethAmountGetEther(amount).valueInWEI
-                         : ethAmountGetTokenQuantity(amount).valueAsInteger);
-
-        // Will be ZERO if transfer is not for ETH
-        BREthereumEther fee = transferGetFee(transfer, &fee_overflow);
-
-        BREthereumBoolean isSend = ethAddressEqual(wallet->address, transferGetSourceAddress(transfer));
-        BREthereumBoolean isRecv = ethAddressEqual(wallet->address, transferGetTargetAddress(transfer));
-
-        if (ETHEREUM_BOOLEAN_IS_TRUE (isSend)) {
-            sent = uint256Add_Overflow(sent, value, &overflow);
-            assert (!overflow);
-
-            fees = uint256Add_Overflow(fees, fee.valueInWEI, &fee_overflow);
-            assert (!fee_overflow);
-        }
-
-        if (ETHEREUM_BOOLEAN_IS_TRUE (isRecv)) {
-            recv = uint256Add_Overflow(recv, value, &overflow);
-            assert (!overflow);
-        }
-    }
-
-    // A wallet balance can never be negative; however, as transfers arrive in a sporadic manner,
-    // the balance could be negative until all transfers arrive, eventually.  If negative, we'll
-    // set the balance to zero.
-    UInt256 balance = uint256Sub_Negative(recv, sent, &negative);
-
-    // If we are going to be changing the balance here then 1) shouldn't we call walletSetBalance()
-    // and shouldn't we also ensure that an event is generated (like all calls to
-    // walletSetBalance() ensure)?
-
-    if (AMOUNT_ETHER == ethAmountGetType(wallet->balance)) {
-        balance = uint256Sub_Negative(balance, fees, &negative);
-        if (negative) balance = UINT256_ZERO;
-        wallet->balance = ethAmountCreateEther (ethEtherCreate(balance));
-    }
-    else {
-        if (negative) balance = UINT256_ZERO;
-        wallet->balance = ethAmountCreateToken (ethTokenQuantityCreate(ethAmountGetToken (wallet->balance), balance));
-    }
-}
-
-extern uint64_t
-walletGetTransferCountAsSource (BREthereumWallet wallet) {
-    unsigned int count = 0;
-
-    for (int i = 0; i < array_count(wallet->transfers); i++)
-         if (ETHEREUM_BOOLEAN_IS_TRUE(ethAddressEqual(wallet->address, transferGetSourceAddress(wallet->transfers[i]))))
-             count += 1;
-
-    return count;
-}
-
-extern uint64_t
-walletGetTransferNonceMaximumAsSource (BREthereumWallet wallet) {
-    uint64_t nonce = TRANSACTION_NONCE_IS_NOT_ASSIGNED;
-
-#define MAX(x,y)    ((x) >= (y) ? (x) : (y))
-    for (int i = 0; i < array_count(wallet->transfers); i++)
-        if (ETHEREUM_BOOLEAN_IS_TRUE(ethAddressEqual(wallet->address, transferGetSourceAddress(wallet->transfers[i])))) {
-            uint64_t newNonce = (unsigned int) transferGetNonce(wallet->transfers[i]);
-            // wallet->transfers can have a newly created transfer that does not yet have
-            // an assigned nonce - avoid such a transfer.
-            if ( TRANSACTION_NONCE_IS_NOT_ASSIGNED != newNonce  &&
-                (TRANSACTION_NONCE_IS_NOT_ASSIGNED == nonce     || newNonce > nonce))
-                nonce = (unsigned int) newNonce;
-        }
-#undef MAX
-    return nonce;
-}
-
-#endif
 
 BRCryptoWalletHandlers cryptoWalletHandlersETH = {
     cryptoWalletReleaseETH,

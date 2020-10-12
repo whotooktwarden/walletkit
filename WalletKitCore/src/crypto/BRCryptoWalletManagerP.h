@@ -94,7 +94,7 @@ typedef BRCryptoClientP2PManager
 
 typedef BRCryptoWallet
 (*BRCryptoWalletManagerCreateWalletHandler) (BRCryptoWalletManager cwm,
-                                               BRCryptoCurrency currency);
+                                             BRCryptoCurrency currency);
 
 typedef void
 (*BRCryptoWalletManagerRecoverTransfersFromTransactionBundleHandler) (BRCryptoWalletManager cwm,
@@ -107,6 +107,7 @@ typedef void
 typedef BRCryptoFeeBasis
 (*BRCryptoWalletManagerRecoverFeeBasisFromFeeEstimateHandler) (BRCryptoWalletManager cwm,
                                                                BRCryptoNetworkFee networkFee,
+                                                               BRCryptoFeeBasis initialFeeBasis,
                                                                double costUnits,
                                                                size_t attributesCount,
                                                                OwnershipKept const char **attributeKeys,
@@ -225,32 +226,6 @@ private_extern void
 cryptoWalletManagerRemWallet (BRCryptoWalletManager cwm,
                               BRCryptoWallet wallet);
 
-#ifdef REFACTOR
-private_extern BRWalletManagerClient
-cryptoWalletManagerClientCreateBTCClient (OwnershipKept BRCryptoWalletManager cwm);
-
-private_extern BREthereumClient
-cryptoWalletManagerClientCreateETHClient (OwnershipKept BRCryptoWalletManager cwm);
-
-private_extern BRGenericClient
-cryptoWalletManagerClientCreateGENClient (OwnershipKept BRCryptoWalletManager cwm);
-
-extern void
-cryptoWalletManagerHandleTransferGEN (BRCryptoWalletManager cwm,
-                                      OwnershipGiven BRGenericTransfer transferGeneric);
-
-extern void
-cryptoWalletManagerHandleTransferGENFilter (BRCryptoWalletManager cwm,
-                                            OwnershipGiven BRGenericTransfer transferGeneric,
-                                            BRCryptoBoolean needBalanceEvent);
-
-private_extern void
-cryptoWalletManagerSetTransferStateGEN (BRCryptoWalletManager cwm,
-                                        BRCryptoWallet wallet,
-                                        BRCryptoTransfer transfer,
-                                        BRGenericTransferState newGenericState);
-#endif
-
 private_extern void
 cryptoWalletManagerRecoverTransfersFromTransactionBundle (BRCryptoWalletManager cwm,
                                                           OwnershipKept BRCryptoClientTransactionBundle bundle);
@@ -275,12 +250,13 @@ cryptoWalletManagerRecoverTransferFromTransferBundle (BRCryptoWalletManager cwm,
 
 
 private_extern BRCryptoFeeBasis
-cryptoWalletManagerRecoverFeeBasisFromEstimate (BRCryptoWalletManager cwm,
-                                                BRCryptoNetworkFee networkFee,
-                                                double costUnits,
-                                                size_t attributesCount,
-                                                OwnershipKept const char **attributeKeys,
-                                                OwnershipKept const char **attributeVals);
+cryptoWalletManagerRecoverFeeBasisFromFeeEstimate (BRCryptoWalletManager cwm,
+                                                   BRCryptoNetworkFee networkFee,
+                                                   BRCryptoFeeBasis initialFeeBasis,
+                                                   double costUnits,
+                                                   size_t attributesCount,
+                                                   OwnershipKept const char **attributeKeys,
+                                                   OwnershipKept const char **attributeVals);
 
 static inline void
 cryptoWalletManagerGenerateEvent (BRCryptoWalletManager manager,

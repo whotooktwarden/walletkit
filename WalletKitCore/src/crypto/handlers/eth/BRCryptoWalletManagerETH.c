@@ -262,11 +262,14 @@ cryptoWalletManagerEstimateFeeBasisETH (BRCryptoWalletManager manager,
     };
 
     BRCryptoCurrency currency = cryptoAmountGetCurrency (amount);
+    BRCryptoFeeBasis feeBasis = cryptoFeeBasisCreateAsETH (wallet->unitForFee, ethFeeBasis);
+
     BRCryptoTransfer transfer = cryptoWalletCreateTransferETH (wallet,
                                                                target,
                                                                amount,
-                                                               cryptoFeeBasisCreateAsETH (wallet->unitForFee, ethFeeBasis),
-                                                               0, NULL,
+                                                               feeBasis,
+                                                               attributesCount,
+                                                               attributes,
                                                                currency,
                                                                wallet->unit,
                                                                wallet->unitForFee);
@@ -276,21 +279,24 @@ cryptoWalletManagerEstimateFeeBasisETH (BRCryptoWalletManager manager,
     cryptoClientQRYEstimateTransferFee (manager->qryManager,
                                         cookie,
                                         transfer,
-                                        networkFee);
+                                        networkFee,
+                                        feeBasis);
 
     cryptoTransferGive (transfer);
+    cryptoFeeBasisGive (feeBasis);
 
     // Require QRY with cookie - made above
     return NULL;
 }
 
 static BRCryptoFeeBasis
-cryptoWalletManagerRecoverFeeBasisFromEstimateETH (BRCryptoWalletManager cwm,
-                                                   BRCryptoNetworkFee networkFee,
-                                                   double costUnits,
-                                                   size_t attributesCount,
-                                                   OwnershipKept const char **attributeKeys,
-                                                   OwnershipKept const char **attributeVals) {
+cryptoWalletManagerRecoverFeeBasisFromFeeEstimateETH (BRCryptoWalletManager cwm,
+                                                      BRCryptoNetworkFee networkFee,
+                                                      BRCryptoFeeBasis initialFeeBasis,
+                                                      double costUnits,
+                                                      size_t attributesCount,
+                                                      OwnershipKept const char **attributeKeys,
+                                                      OwnershipKept const char **attributeVals) {
     BREthereumFeeBasis feeBasis = ethFeeBasisCreate (ethGasCreate ((uint64_t) costUnits),
                                                      cryptoNetworkFeeAsETH (networkFee));
     return cryptoFeeBasisCreateAsETH (networkFee->pricePerCostFactorUnit, feeBasis);
@@ -642,7 +648,9 @@ cryptoWalletManagerRecoverExchange (BRCryptoWalletManager manager,
 
     BREthereumExchange exchange = ethExchangeCreate (ethAddressCreate(bundle->from),
                                                      ethAddressCreate(bundle->to),
-                                                     ethAddressCreate(contract),
+                                                     (NULL != contract
+                                                      ? ethAddressCreate(contract)
+                                                      : EMPTY_ADDRESS_INIT),
                                                      0, // contractdAssetIndex,
                                                      amount);
 
@@ -668,7 +676,7 @@ cryptoWalletManagerRecoverTransfersFromTransactionBundleETH (BRCryptoWalletManag
                                                              OwnershipKept BRCryptoClientTransactionBundle bundle) {
     BRCryptoWalletManagerETH managerETH = cryptoWalletManagerCoerceETH (manager);
     (void) managerETH;
-assert (0);
+    assert (0);
 }
 
 static const char *
@@ -690,7 +698,7 @@ cryptoWalletManagerRecoverTransferFromTransferBundleETH (BRCryptoWalletManager m
 
     BRCryptoNetwork  network = cryptoWalletManagerGetNetwork (manager);
 
-    // We'll only have a `walletCurrency` if the bundle->currency is for ETH or fro an ERC20 token
+    // We'll only have a `walletCurrency` if the bundle->currency is for ETH or from an ERC20 token
     // that is known.  If `bundle` indicates a `transfer` that we sent and we do not know about
     // the ERC20 token we STILL MUST process the fee and the nonce.
     BRCryptoCurrency walletCurrency = cryptoNetworkGetCurrencyForUids (network, bundle->currency);
@@ -721,19 +729,32 @@ cryptoWalletManagerRecoverTransferFromTransferBundleETH (BRCryptoWalletManager m
                 needTransaction = true;
             }
 
-            // A Primary Transaction of ERC20 Transfer.  The Transaction produces at most two Transfers -
-            // one Log for the ERC20 token (with a 'contract') and one Transaction for the ETH fee
+            // A Primary Transaction of some arbitrary asset.  The Transaction produces one or more
+            // Transfers - one Transfer for some asset (ETH or ERC20) w/ the ETH fee (if we sent
+            // it).  The Primary Transaction might have other transfers
+
+            // ... an `ERC20 Transfer Event` produces a BREthereumLog - if we know about the token
             else if (strPrefix ("0xa9059cbb", data)) {
+                // See below analogous description for 'Internal Transfer'
                 needLog         = (NULL != contract);
                 needTransaction = (NULL != bundle->fee);
             }
 
-            // A Primary Transaction of some arbitrary asset.  The Transaction produces one or more
-            // Transfers - one Transaction for the ETH fee and any number of other transfers, including
-            // others for ETH
+            // ... an 'Internal Transfer' produces a BREthereumExchang - if we know about the token
             else {
-                needExchange    = (NULL == contract);        // NULL contract -> ETH exchange
-                needTransaction = (NULL != bundle->fee);
+
+                // If contract is NULL, then we do not know about this ERC20 token; we won't need
+                // an exchange but might need a transaction if we sent the tranaction (paid a fee).
+                //
+                // If contract is not NULL, then we know about this ERC20 token; we will need
+                // an exchange.  We'll need a transaction if we sent the transaction.
+                // `needTransaction`.
+
+                needExchange    = (NULL != contract);        // NULL contract -> ETH exchange
+                needTransaction = (NULL != bundle->fee);     // && NULL == contract
+
+                // if ( needExchange && needTransaction) then the transaction will have amount == 0
+                // if (!needExchange && needTransaction) then the transaction will have amount  > 0
             }
 
             // On errors, skip Log and Exchange; but keep Transaction if needed.
@@ -743,15 +764,21 @@ cryptoWalletManagerRecoverTransferFromTransferBundleETH (BRCryptoWalletManager m
             if (needLog) {
                 // This could produce an error - generally a parse error.  We'll soldier on.
                 cryptoWalletManagerRecoverLog (manager, contract, bundle);
-
             }
 
             if (needExchange) {
                 cryptoWalletManagerRecoverExchange (manager, contract, bundle);
             }
 
+            // We must handle Log and Exchange above, based on the contents of `bundle`.  In the
+            // following we'll possibly re-write `bundle` so that it works with a Log or Exchange.
             if (needTransaction) {
+
+                // If we need a Log or Exchange then we zero-out the amount.  If we don't need
+                // a Log nor Exhange, then the recovered transaction is for an ETH transfer and
+                // we'll keep the amount.
                 if (needLog || needExchange) {
+                    
                     // If needLog or needExchange w/ needTransaction then the transaction
                     //     a) holds the fee; and
                     //     b) increases the nonce.
@@ -764,7 +791,6 @@ cryptoWalletManagerRecoverTransferFromTransferBundleETH (BRCryptoWalletManager m
                         bundle->to = strdup (contract);
                     }
                 }
-                // bundle->data?
                 cryptoWalletManagerRecoverTransaction (manager, bundle);
             }
             break;
@@ -802,166 +828,7 @@ BRCryptoWalletManagerHandlers cryptoWalletManagerHandlersETH = {
     cryptoWalletManagerEstimateFeeBasisETH,
     cryptoWalletManagerRecoverTransfersFromTransactionBundleETH,
     cryptoWalletManagerRecoverTransferFromTransferBundleETH,
-    cryptoWalletManagerRecoverFeeBasisFromEstimateETH,
+    cryptoWalletManagerRecoverFeeBasisFromFeeEstimateETH,
     NULL,//BRCryptoWalletManagerWalletSweeperValidateSupportedHandler not supported
     NULL,//BRCryptoWalletManagerCreateWalletSweeperHandler not supported
 };
-
-#if 0
-extern void
-ewmHandleLog (BREthereumEWM ewm,
-              BREthereumBCSCallbackLogType type,
-              OwnershipGiven BREthereumLog log) {
-    BREthereumHash logHash = logGetHash(log);
-
-    BREthereumHash transactionHash;
-    size_t logIndex;
-
-    // Assert that we always have an identifier for `log`.
-    BREthereumBoolean extractedIdentifier = logExtractIdentifier (log, &transactionHash, &logIndex);
-    assert (ETHEREUM_BOOLEAN_IS_TRUE (extractedIdentifier));
-
-    BREthereumToken token = ewmLookupToken (ewm, logGetAddress(log));
-    if (NULL == token) { logRelease(log); return;}
-
-    // TODO: Confirm LogTopic[0] is 'transfer'
-    if (3 != logGetTopicsCount(log)) { logRelease(log); return; }
-
-    BREthereumWallet wallet = ewmGetWalletHoldingToken (ewm, token);
-    assert (NULL != wallet);
-
-    BREthereumTransfer transfer = walletGetTransferByIdentifier (wallet, logHash);
-    if (NULL == transfer)
-        transfer = walletGetTransferByOriginatingHash (wallet, transactionHash);
-
-    int needStatusEvent = 0;
-
-    // If we've no transfer, then create one and save `log` as the basis
-    if (NULL == transfer) {
-        transfer = transferCreateWithLog (log, token, ewm->coder); // log ownership given
-
-        walletHandleTransfer (wallet, transfer);
-
-        ewmSignalTransferEvent (ewm, wallet, transfer, (BREthereumTransferEvent) {
-            TRANSFER_EVENT_CREATED,
-            SUCCESS
-        });
-
-        // If this transfer references a transaction, fill out this log's fee basis
-        ewmHandleLogFeeBasis (ewm, transactionHash, NULL, transfer);
-
-        needStatusEvent = 1;
-    }
-
-    // We've got a transfer for log.  We'll update the transfer's basis and check if we need
-    // to report a transfer status event.  We'll strive to only report events when the status has
-    // actually changed.
-    else {
-        needStatusEvent = ewmReportTransferStatusAsEventIsNeeded (ewm, wallet, transfer,
-                                                                  logGetStatus (log));
-
-        // Log becomes the new basis for transfer
-        transferSetBasisForLog (transfer, log);  // log ownership given
-    }
-
-    if (needStatusEvent) {
-        BREthereumHashString logHashString;
-        ethHashFillString(logHash, logHashString);
-
-        BREthereumHashString transactionHashString;
-        ethHashFillString(transactionHash, transactionHashString);
-
-        eth_log ("EWM", "Log: %s { %8s @ %zu }, Change: %s, Status: %d",
-                 logHashString, transactionHashString, logIndex,
-                 BCS_CALLBACK_TRANSACTION_TYPE_NAME(type),
-                 logGetStatus(log).type);
-
-        ewmReportTransferStatusAsEvent (ewm, wallet, transfer);
-    }
-
-    // We've added a transfer and should update the wallet's balance.  Ethereum is 'account based';
-    // but in API modes we don't have the account information - so we'll update the balance
-    // explicitly.  In P2P mode, we get the 'account'.
-    //
-    if (CRYPTO_SYNC_MODE_API_ONLY          == ewm->mode ||
-        CRYPTO_SYNC_MODE_API_WITH_P2P_SEND == ewm->mode)
-        ewmUpdateAndReportWalletState (ewm, wallet);
-}
-
-extern void
-ewmHandleExchange (BREthereumEWM ewm,
-                   BREthereumBCSCallbackExchangeType type,
-                   OwnershipGiven BREthereumExchange exchange) {
-    BREthereumHash exchangeHash = ethExchangeGetHash(exchange);
-
-    BREthereumHash transactionHash;
-    size_t exchangeIndex;
-
-    // Assert that we always have an identifier for `log`.
-    BREthereumBoolean extractedIdentifier = ethExchangeExtractIdentifier (exchange, &transactionHash, &exchangeIndex);
-    assert (ETHEREUM_BOOLEAN_IS_TRUE (extractedIdentifier));
-
-    BREthereumAddress contract = ethExchangeGetContract(exchange);
-    BREthereumToken   token    = ewmLookupToken (ewm, contract);
-    BREthereumWallet  wallet = (ETHEREUM_BOOLEAN_IS_TRUE (ethAddressEqual (contract, EMPTY_ADDRESS_INIT))
-                                ? ewmGetWallet (ewm)
-                                : (NULL == token ? NULL : ewmGetWalletHoldingToken (ewm, token)));
-
-    // TODO: Nothing to do?
-    if (NULL == wallet) { ethExchangeRelease(exchange); return; }
-
-    BREthereumTransfer transfer = walletGetTransferByIdentifier (wallet, exchangeHash);
-    // We never have an originating transfers as we can't create internal transactions
-
-    bool needStatusEvent = false;
-
-    if (NULL == transfer) {
-        transfer = transferCreateWithExchange(exchange, ewm->tokens);
-
-        walletHandleTransfer (wallet, transfer);
-
-        ewmSignalTransferEvent (ewm, wallet, transfer, (BREthereumTransferEvent) {
-            TRANSFER_EVENT_CREATED,
-            SUCCESS
-        });
-
-        // If this transfer references a transaction, fill out this exchanges's fee basis
-        if (wallet != ewmGetWallet(ewm))
-            ewmHandleExchangeFeeBasis (ewm, transactionHash, NULL, transfer);
-
-        needStatusEvent = true;
-    }
-    else {
-        needStatusEvent = ewmReportTransferStatusAsEventIsNeeded (ewm, wallet, transfer,
-                                                                  ethExchangeGetStatus(exchange));
-
-        // Exchange becomes the new basis for transfer
-        transferSetBasisForExchange (transfer, exchange);
-    }
-
-    if (needStatusEvent) {
-        BREthereumHashString exchnageHashString;
-        ethHashFillString(exchangeHash, exchnageHashString);
-
-        BREthereumHashString transactionHashString;
-        ethHashFillString(transactionHash, transactionHashString);
-
-        eth_log ("EWM", "Exchange: %s { %8s @ %zu }, Change: %s, Status: %d",
-                 exchnageHashString, transactionHashString, exchangeIndex,
-                 BCS_CALLBACK_TRANSACTION_TYPE_NAME(type),
-                 ethExchangeGetStatus (exchange).type);
-
-        ewmReportTransferStatusAsEvent (ewm, wallet, transfer);
-    }
-
-    // We've added a transfer and should update the wallet's balance.  Ethereum is 'account based';
-    // but in API modes we don't have the account information - so we'll update the balance
-    // explicitly.  In P2P mode, we get the 'account'.
-    //
-    if (CRYPTO_SYNC_MODE_API_ONLY          == ewm->mode ||
-        CRYPTO_SYNC_MODE_API_WITH_P2P_SEND == ewm->mode)
-        ewmUpdateAndReportWalletState (ewm, wallet);
-
-}
-
-#endif
