@@ -133,10 +133,15 @@ fileServiceSave (BRFileService fs,
                  const char *type,  /* block, peers, transactions, logs, ... */
                  const void *entity);     /* BRMerkleBlock*, BRTransaction, BREthereumTransaction, ... */
 
-extern int
+extern int  // 1 -> success, 0 -> failure
 fileServiceRemove (BRFileService fs,
                    const char *type,
-                   UInt256 identifier);
+                   const void *entity);
+
+extern int  // 1 -> success, 0 -> failure
+fileServiceRemoveByIdentifier (BRFileService fs,
+                               const char *type,
+                               UInt256 identifier);
 
 extern int
 fileServiceReplace (BRFileService fs,
