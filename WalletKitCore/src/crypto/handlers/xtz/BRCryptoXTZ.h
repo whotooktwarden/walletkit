@@ -71,6 +71,7 @@ extern BRCryptoWalletHandlers cryptoWalletHandlersXTZ;
 
 private_extern BRCryptoWallet
 cryptoWalletCreateAsXTZ (BRCryptoWalletListener listener,
+                         BRCryptoWalletFileServiceContext fileServiceContext,
                          BRCryptoUnit unit,
                          BRCryptoUnit unitForFee,
                          BRTezosAccount xtzAccount);

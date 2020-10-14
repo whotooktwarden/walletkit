@@ -367,7 +367,13 @@ cryptoWalletManagerCreateWalletETH (BRCryptoWalletManager manager,
     // The `unitForFee` is always the default/base unit for the network.
     BRCryptoUnit unitForFee = cryptoNetworkGetUnitAsDefault (manager->network, NULL);
 
+    BRCryptoWalletFileServiceContext fileServiceContext = {
+        manager->fileService,
+        fileServiceTypeTransactionsETH
+    };
+
     BRCryptoWallet wallet = cryptoWalletCreateAsETH (manager->listenerWallet,
+                                                     fileServiceContext,
                                                      unit,
                                                      unitForFee,
                                                      ethToken,
@@ -405,7 +411,13 @@ cryptoWalletManagerEnsureWalletForToken (BRCryptoWalletManagerETH managerETH,
         BRCryptoUnit     unit       = cryptoNetworkGetUnitAsDefault     (managerETH->base.network, currency);
         BRCryptoUnit     unitForFee = cryptoNetworkGetUnitAsDefault     (managerETH->base.network, NULL);
 
+        BRCryptoWalletFileServiceContext fileServiceContext = {
+            managerETH->base.fileService,
+            fileServiceTypeTransactionsETH
+        };
+
         wallet = cryptoWalletCreateAsETH (managerETH->base.listenerWallet,
+                                          fileServiceContext,
                                           unit,
                                           unitForFee,
                                           token,

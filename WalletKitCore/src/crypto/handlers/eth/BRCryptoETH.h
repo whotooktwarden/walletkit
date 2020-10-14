@@ -146,6 +146,7 @@ cryptoWalletCoerce (BRCryptoWallet wallet);
 
 private_extern BRCryptoWallet
 cryptoWalletCreateAsETH (BRCryptoWalletListener listener,
+                         BRCryptoWalletFileServiceContext fileServiceContext,
                          BRCryptoUnit unit,
                          BRCryptoUnit unitForFee,
                          BREthereumToken   ethToken,

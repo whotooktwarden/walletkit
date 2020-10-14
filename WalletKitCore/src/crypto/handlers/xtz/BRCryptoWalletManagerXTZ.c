@@ -344,8 +344,14 @@ cryptoWalletManagerCreateWalletXTZ (BRCryptoWalletManager manager,
     BRCryptoNetwork  network       = manager->network;
     BRCryptoUnit     unitAsBase    = cryptoNetworkGetUnitAsBase    (network, currency);
     BRCryptoUnit     unitAsDefault = cryptoNetworkGetUnitAsDefault (network, currency);
-    
+
+    BRCryptoWalletFileServiceContext fileServiceContext = {
+        manager->fileService,
+        NULL
+    };
+
     BRCryptoWallet wallet = cryptoWalletCreateAsXTZ (manager->listenerWallet,
+                                                     fileServiceContext,
                                                      unitAsDefault,
                                                      unitAsDefault,
                                                      xtzAccount);

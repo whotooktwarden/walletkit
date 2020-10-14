@@ -290,8 +290,14 @@ cryptoWalletManagerCreateWalletXRP (BRCryptoWalletManager manager,
     BRCryptoNetwork  network       = manager->network;
     BRCryptoUnit     unitAsBase    = cryptoNetworkGetUnitAsBase    (network, currency);
     BRCryptoUnit     unitAsDefault = cryptoNetworkGetUnitAsDefault (network, currency);
-    
+
+    BRCryptoWalletFileServiceContext fileServiceContext = {
+        manager->fileService,
+        NULL
+    };
+
     BRCryptoWallet wallet = cryptoWalletCreateAsXRP (manager->listenerWallet,
+                                                     fileServiceContext,
                                                      unitAsDefault,
                                                      unitAsDefault,
                                                      xrpAccount);

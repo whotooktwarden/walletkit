@@ -75,6 +75,7 @@ extern BRCryptoWalletHandlers cryptoWalletHandlersXRP;
 
 private_extern BRCryptoWallet
 cryptoWalletCreateAsXRP (BRCryptoWalletListener listener,
+                         BRCryptoWalletFileServiceContext fileServiceContext,
                          BRCryptoUnit unit,
                          BRCryptoUnit unitForFee,
                          BRRippleAccount xrpAccount);

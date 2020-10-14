@@ -75,6 +75,7 @@ extern BRCryptoWalletHandlers cryptoWalletHandlersHBAR;
 
 private_extern BRCryptoWallet
 cryptoWalletCreateAsHBAR (BRCryptoWalletListener listener,
+                          BRCryptoWalletFileServiceContext fileServiceContext,
                           BRCryptoUnit unit,
                           BRCryptoUnit unitForFee,
                           BRHederaAccount hbarAccount);

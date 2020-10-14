@@ -40,6 +40,7 @@ cryptoWalletCreateCallbackHBAR (BRCryptoWalletCreateContext context,
 
 private_extern BRCryptoWallet
 cryptoWalletCreateAsHBAR (BRCryptoWalletListener listener,
+                          BRCryptoWalletFileServiceContext fileServiceContext,
                           BRCryptoUnit unit,
                           BRCryptoUnit unitForFee,
                           BRHederaAccount hbarAccount) {
@@ -58,6 +59,7 @@ cryptoWalletCreateAsHBAR (BRCryptoWalletListener listener,
     BRCryptoWallet wallet = cryptoWalletAllocAndInit (sizeof (struct BRCryptoWalletHBARRecord),
                                                       CRYPTO_NETWORK_TYPE_HBAR,
                                                       listener,
+                                                      fileServiceContext,
                                                       unit,
                                                       unitForFee,
                                                       hasMinBalance ? cryptoAmountCreateAsHBAR(unit, CRYPTO_FALSE, minBalance) : NULL,

@@ -262,8 +262,14 @@ cryptoWalletManagerCreateWalletBTC (BRCryptoWalletManager manager,
     BRCryptoUnit     unitAsBase    = cryptoNetworkGetUnitAsBase    (network, currency);
     BRCryptoUnit     unitAsDefault = cryptoNetworkGetUnitAsDefault (network, currency);
 
+    BRCryptoWalletFileServiceContext fileServiceContext = {
+        manager->fileService,
+        fileServiceTypeTransactionsBTC
+    };
+
     BRCryptoWallet wallet = cryptoWalletCreateAsBTC (manager->type,
                                                      manager->listenerWallet,
+                                                     fileServiceContext,
                                                      unitAsDefault,
                                                      unitAsDefault,
                                                      btcWallet);

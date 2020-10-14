@@ -41,6 +41,7 @@ cryptoWalletCreateCallbackXRP (BRCryptoWalletCreateContext context,
 
 private_extern BRCryptoWallet
 cryptoWalletCreateAsXRP (BRCryptoWalletListener listener,
+                         BRCryptoWalletFileServiceContext fileServiceContext,
                          BRCryptoUnit unit,
                          BRCryptoUnit unitForFee,
                          BRRippleAccount xrpAccount) {
@@ -59,6 +60,7 @@ cryptoWalletCreateAsXRP (BRCryptoWalletListener listener,
     BRCryptoWallet wallet = cryptoWalletAllocAndInit (sizeof (struct BRCryptoWalletXRPRecord),
                                                       CRYPTO_NETWORK_TYPE_XRP,
                                                       listener,
+                                                      fileServiceContext,
                                                       unit,
                                                       unitForFee,
                                                       hasMinBalance ? cryptoAmountCreateAsXRP(unit, CRYPTO_FALSE, minBalanceDrops) : NULL,

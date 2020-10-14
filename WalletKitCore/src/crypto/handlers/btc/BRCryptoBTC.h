@@ -123,6 +123,7 @@ cryptoWalletAsBTC (BRCryptoWallet wallet);
 private_extern BRCryptoWallet
 cryptoWalletCreateAsBTC (BRCryptoBlockChainType type,
                          BRCryptoWalletListener listener,
+                         BRCryptoWalletFileServiceContext fileServiceContext,
                          BRCryptoUnit unit,
                          BRCryptoUnit unitForFee,
                          BRWallet *wid);

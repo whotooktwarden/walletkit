@@ -16,6 +16,7 @@
 #include <assert.h>
 #include "support/BRArray.h"
 #include "support/BRSet.h"
+#include "support/BRFileService.h"
 
 #include "BRCryptoWallet.h"
 #include "BRCryptoBaseP.h"
@@ -98,6 +99,16 @@ typedef struct {
     BRCryptoWalletIsEqualHandler isEqual;
 } BRCryptoWalletHandlers;
 
+// MARK: - Wallet File Service
+
+///
+/// BRCryptoWalletFileServiceContext - hold a context, passed down from BRCryptoWalletManager, that
+/// will be used for BRCryptoFileService functions applied to transfers and perhaps wallets.
+///
+typedef struct {
+    BRFileService fileService;
+    const char   *fileServiceTransferType;
+} BRCryptoWalletFileServiceContext;
 
 // MARK: - Wallet
 
@@ -109,6 +120,7 @@ struct BRCryptoWalletRecord {
 
     pthread_mutex_t lock;
     BRCryptoWalletListener listener;
+    BRCryptoWalletFileServiceContext fileServiceContext;
 
     BRCryptoWalletState state;
 
@@ -143,6 +155,7 @@ extern BRCryptoWallet
 cryptoWalletAllocAndInit (size_t sizeInBytes,
                           BRCryptoBlockChainType type,
                           BRCryptoWalletListener listener,
+                          BRCryptoWalletFileServiceContext fileServiceContext,
                           BRCryptoUnit unit,
                           BRCryptoUnit unitForFee,
                           BRCryptoAmount balanceMinimum,
@@ -174,6 +187,26 @@ static inline void
 cryptoWalletGenerateEvent (BRCryptoWallet wallet,
                            BRCryptoWalletEvent event) {
     cryptoListenerGenerateWalletEvent (&wallet->listener, wallet, event);
+}
+
+static inline void
+cryptoWalletSaveTransferToFileService (BRCryptoWallet wallet,
+                                       BRCryptoTransfer transfer) {
+    if (NULL != wallet->fileServiceContext.fileService &&
+        NULL != wallet->fileServiceContext.fileServiceTransferType)
+        fileServiceSave (wallet->fileServiceContext.fileService,
+                         wallet->fileServiceContext.fileServiceTransferType,
+                         transfer);
+}
+
+static inline void
+cryptoWalletRemoveTransferFromFileService (BRCryptoWallet wallet,
+                                           BRCryptoTransfer transfer) {
+    if (NULL != wallet->fileServiceContext.fileService &&
+        NULL != wallet->fileServiceContext.fileServiceTransferType)
+        fileServiceRemove (wallet->fileServiceContext.fileService,
+                           wallet->fileServiceContext.fileServiceTransferType,
+                           transfer);
 }
 
 #ifdef __cplusplus

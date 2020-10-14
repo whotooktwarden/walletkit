@@ -42,6 +42,7 @@ cryptoWalletCreateCallbackXTZ (BRCryptoWalletCreateContext context,
 
 private_extern BRCryptoWallet
 cryptoWalletCreateAsXTZ (BRCryptoWalletListener listener,
+                         BRCryptoWalletFileServiceContext fileServiceContext,
                          BRCryptoUnit unit,
                          BRCryptoUnit unitForFee,
                          BRTezosAccount xtzAccount) {
@@ -60,6 +61,7 @@ cryptoWalletCreateAsXTZ (BRCryptoWalletListener listener,
     BRCryptoWallet wallet = cryptoWalletAllocAndInit (sizeof (struct BRCryptoWalletXTZRecord),
                                                       CRYPTO_NETWORK_TYPE_XTZ,
                                                       listener,
+                                                      fileServiceContext,
                                                       unit,
                                                       unitForFee,
                                                       hasMinBalance ? cryptoAmountCreateAsXTZ(unit, CRYPTO_FALSE, minBalance) : NULL,

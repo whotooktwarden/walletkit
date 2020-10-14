@@ -295,7 +295,13 @@ cryptoWalletManagerCreateWalletHBAR (BRCryptoWalletManager manager,
     BRCryptoUnit     unitAsBase    = cryptoNetworkGetUnitAsBase    (network, currency);
     BRCryptoUnit     unitAsDefault = cryptoNetworkGetUnitAsDefault (network, currency);
 
+    BRCryptoWalletFileServiceContext fileServiceContext = {
+        manager->fileService,
+        NULL
+    };
+
     BRCryptoWallet wallet = cryptoWalletCreateAsHBAR (manager->listenerWallet,
+                                                      fileServiceContext,
                                                       unitAsDefault,
                                                       unitAsDefault,
                                                       hbarAccount);

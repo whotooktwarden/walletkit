@@ -36,6 +36,7 @@ extern BRCryptoWallet
 cryptoWalletAllocAndInit (size_t sizeInBytes,
                           BRCryptoBlockChainType type,
                           BRCryptoWalletListener listener,
+                          BRCryptoWalletFileServiceContext fileServiceContext,
                           BRCryptoUnit unit,
                           BRCryptoUnit unitForFee,
                           BRCryptoAmount balanceMinimum,
@@ -50,6 +51,8 @@ cryptoWalletAllocAndInit (size_t sizeInBytes,
     wallet->sizeInBytes = sizeInBytes;
     wallet->type  = type;
     wallet->handlers = cryptoHandlersLookup(type)->wallet;
+
+    wallet->fileServiceContext = fileServiceContext;
 
     wallet->listener   = listener;
     wallet->state      = CRYPTO_WALLET_STATE_CREATED;
@@ -319,12 +322,42 @@ cryptoWalletAnnounceTransfer (BRCryptoWallet wallet,
         wallet->handlers->announceTransfer (wallet, transfer, type);
 }
 
+#if 0
+static void
+cryptoWalletAddTransfers (BRCryptoWallet wallet,
+                          BRArrayOf (BRCryptoTransfer) transfers,
+                          bool needLock) {
+    if (needLock) pthread_mutex_lock (&wallet->lock);
+    size_t transfersCount = array_count(transfers);
+
+    BRArrayOf (BRCryptoTransfer) addedTransfers;
+    array_new (addedTransfers, transfersCount);
+
+    for (size_t index = 0; index < array_count(transfers); index++) {
+        BRCryptoTransfer transfer = transfers[index];
+        if (CRYPTO_FALSE == cryptoWalletHasTransferLock (wallet, transfer, false))
+            array_add (addedTransfers, cryptoTransferTake (transfer));
+    }
+
+    array_add_array (wallet->transfers, addedTransfers, array_count (addedTransfers));
+    fileServiceSave ();
+//    cryptoWalletGenerateEvent (wallet, (BRCryptoWalletEvent) {
+//        CRYPTO_WALLET_EVENT_TRANSFERS_ADDED,
+//        { .transfers = addedTransfers }
+//    });
+
+    cryptoWalletUpdBalance (wallet);
+    if (needLock) pthread_mutex_unlock (&wallet->lock);
+}
+#endif
+
 extern void
 cryptoWalletAddTransfer (BRCryptoWallet wallet,
                          BRCryptoTransfer transfer) {
     pthread_mutex_lock (&wallet->lock);
     if (CRYPTO_FALSE == cryptoWalletHasTransferLock (wallet, transfer, false)) {
         array_add (wallet->transfers, cryptoTransferTake(transfer));
+        cryptoWalletSaveTransferToFileService (wallet, transfer);
         cryptoWalletAnnounceTransfer (wallet, transfer, CRYPTO_WALLET_EVENT_TRANSFER_ADDED);
         cryptoWalletGenerateEvent (wallet, (BRCryptoWalletEvent) {
             CRYPTO_WALLET_EVENT_TRANSFER_ADDED,
@@ -343,6 +376,7 @@ cryptoWalletRemTransfer (BRCryptoWallet wallet, BRCryptoTransfer transfer) {
         if (CRYPTO_TRUE == cryptoTransferEqual (wallet->transfers[index], transfer)) {
             walletTransfer = wallet->transfers[index];
             array_rm (wallet->transfers, index);
+            cryptoWalletRemoveTransferFromFileService (wallet, transfer);
             cryptoWalletAnnounceTransfer (wallet, transfer, CRYPTO_WALLET_EVENT_TRANSFER_DELETED);
             cryptoWalletGenerateEvent (wallet, (BRCryptoWalletEvent) {
                 CRYPTO_WALLET_EVENT_TRANSFER_DELETED,
@@ -362,6 +396,10 @@ static void
 cryptoWalletUpdTransfer (BRCryptoWallet wallet,
                          BRCryptoTransfer transfer,
                          OwnershipKept BRCryptoTransferState newState) {
+
+    // The transfer's state has changed, save it
+    cryptoWalletSaveTransferToFileService (wallet, transfer);
+
     // The transfer's state has changed.  This implies a possible amount/fee change.
     if (newState.type == CRYPTO_TRANSFER_STATE_INCLUDED &&
         CRYPTO_TRUE == cryptoWalletHasTransfer (wallet, transfer))
