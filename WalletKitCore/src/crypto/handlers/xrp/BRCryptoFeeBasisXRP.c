@@ -75,6 +75,50 @@ cryptoFeeBasisGetFeeXRP (BRCryptoFeeBasis feeBasis) {
     return cryptoFeeBasisGetPricePerCostFactor (feeBasis);
 }
 
+static BRRlpItem
+cryptoFeeBasisRLPEncodeXRP (BRCryptoFeeBasis feeBasis,
+                             BRCryptoNetwork network,
+                             BRRlpCoder coder) {
+    BRCryptoFeeBasisXRP feeBasisXRP = cryptoFeeBasisCoerce(feeBasis);
+
+    return rlpEncodeList (coder, 4,
+                          cryptoBlockChainTypeRLPEncode (feeBasis->type, coder),
+                          cryptoNetworkRLPEncodeUnit (network, feeBasis->unit, coder),
+                          rlpEncodeUInt64 (coder, (uint64_t) feeBasisXRP->xrpFeeBasis.pricePerCostFactor, 0),
+                          rlpEncodeUInt64 (coder, (uint64_t) feeBasisXRP->xrpFeeBasis.costFactor, 0));
+}
+
+static BRCryptoFeeBasis
+cryptoFeeBasisRLPDecodeXRP (BRRlpItem item,
+                             BRCryptoNetwork network,
+                             BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (4 == itemsCount);
+
+    BRCryptoBlockChainType type = cryptoBlockChainTypeRLPDecode (items[0], coder);
+    assert (network->type == type);
+
+    BRCryptoUnit unit = cryptoNetworkRLPDecodeUnit (network, items[1], coder);
+
+    BRCryptoFeeBasisCreateContextXRP contextXRP = {
+        ((BRRippleFeeBasis) {
+            (BRRippleUnitDrops) rlpDecodeUInt64 (coder, items[2], 0),
+            (uint32_t) rlpDecodeUInt64 (coder, items[3], 0)
+        })
+    };
+
+    BRCryptoFeeBasis feeBasis = cryptoFeeBasisAllocAndInit (sizeof (struct BRCryptoFeeBasisXRPRecord),
+                                                            type,
+                                                            unit,
+                                                            &contextXRP,
+                                                            cryptoFeeBasisCreateCallbackXRP);
+
+    cryptoUnitGive (unit);
+
+    return feeBasis;
+}
+
 static BRCryptoBoolean
 cryptoFeeBasisIsEqualXRP (BRCryptoFeeBasis feeBasis1, BRCryptoFeeBasis feeBasis2) {
     BRCryptoFeeBasisXRP fb1 = cryptoFeeBasisCoerce (feeBasis1);
@@ -90,5 +134,7 @@ BRCryptoFeeBasisHandlers cryptoFeeBasisHandlersXRP = {
     cryptoFeeBasisGetCostFactorXRP,
     cryptoFeeBasisGetPricePerCostFactorXRP,
     cryptoFeeBasisGetFeeXRP,
+    cryptoFeeBasisRLPEncodeXRP,
+    cryptoFeeBasisRLPDecodeXRP,
     cryptoFeeBasisIsEqualXRP
 };

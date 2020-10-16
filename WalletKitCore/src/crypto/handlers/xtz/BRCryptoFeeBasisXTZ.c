@@ -78,6 +78,96 @@ cryptoFeeBasisGetFeeXTZ (BRCryptoFeeBasis feeBasis) {
     return cryptoAmountCreateAsXTZ (feeBasis->unit, CRYPTO_FALSE, fee);
 }
 
+static BRRlpItem
+tezosFeeBasisRLPEncode (const BRTezosFeeBasis *feeBasis,
+                        BRRlpCoder coder) {
+    switch (feeBasis->type) {
+        case FEE_BASIS_ESTIMATE:
+            return rlpEncodeList (coder, 6,
+                                  rlpEncodeUInt64 (coder, (uint64_t) feeBasis->type, 0),
+                                  rlpEncodeUInt64 (coder, (uint64_t) feeBasis->u.estimate.mutezPerByte, 0),
+                                  rlpEncodeUInt64 (coder, (uint64_t) feeBasis->u.estimate.sizeInBytes, 0),
+                                  rlpEncodeUInt64 (coder, (uint64_t) feeBasis->u.estimate.gasLimit, 0),
+                                  rlpEncodeUInt64 (coder, (uint64_t) feeBasis->u.estimate.storageLimit, 0),
+                                  rlpEncodeUInt64 (coder, (uint64_t) feeBasis->u.estimate.counter, 0));
+
+        case FEE_BASIS_ACTUAL:
+            return rlpEncodeList2 (coder,
+                                   rlpEncodeUInt64 (coder, feeBasis->type, 0),
+                                   rlpEncodeUInt64 (coder, (uint64_t) feeBasis->u.actual.fee, 0));
+
+        default:
+            assert (0);
+            return NULL;
+    }
+}
+
+static BRTezosFeeBasis
+tezosFeeBasisRLPDecode (BRRlpItem item,
+                        BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (2 == itemsCount || 6 == itemsCount);
+
+    BRTezosFeeBasisType type = (BRTezosFeeBasisType) rlpDecodeUInt64 (coder, items[0], 0);
+
+    switch (type) {
+        case FEE_BASIS_ESTIMATE:
+            return tezosFeeBasisCreateEstimate ((BRTezosUnitMutez) rlpDecodeUInt64 (coder, items[1], 0),
+                                                (size_t) rlpDecodeUInt64 (coder, items[2], 0),
+                                                (int64_t) rlpDecodeUInt64 (coder, items[3], 0),
+                                                (int64_t) rlpDecodeUInt64 (coder, items[4], 0),
+                                                (int64_t) rlpDecodeUInt64 (coder, items[5], 0));
+
+        case FEE_BASIS_ACTUAL:
+            return tezosFeeBasisCreateActual ((BRTezosUnitMutez) rlpDecodeUInt64 (coder, items[1], 0));
+
+        default:
+            assert (0);
+            return (BRTezosFeeBasis) {};
+    }
+}
+
+static BRRlpItem
+cryptoFeeBasisRLPEncodeXTZ (BRCryptoFeeBasis feeBasis,
+                             BRCryptoNetwork network,
+                             BRRlpCoder coder) {
+    BRCryptoFeeBasisXTZ feeBasisXTZ = cryptoFeeBasisCoerceXTZ(feeBasis);
+
+    return rlpEncodeList (coder, 3,
+                          cryptoBlockChainTypeRLPEncode (feeBasis->type, coder),
+                          cryptoNetworkRLPEncodeUnit (network, feeBasis->unit, coder),
+                          tezosFeeBasisRLPEncode (&feeBasisXTZ->xtzFeeBasis, coder));
+}
+
+static BRCryptoFeeBasis
+cryptoFeeBasisRLPDecodeXTZ (BRRlpItem item,
+                             BRCryptoNetwork network,
+                             BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (3 == itemsCount);
+
+    BRCryptoBlockChainType type = cryptoBlockChainTypeRLPDecode (items[0], coder);
+    assert (network->type == type);
+
+    BRCryptoUnit unit = cryptoNetworkRLPDecodeUnit (network, items[1], coder);
+
+    BRCryptoFeeBasisCreateContextXTZ contextXTZ = {
+        tezosFeeBasisRLPDecode (items[2], coder)
+    };
+
+    BRCryptoFeeBasis feeBasis = cryptoFeeBasisAllocAndInit (sizeof (struct BRCryptoFeeBasisXTZRecord),
+                                                            type,
+                                                            unit,
+                                                            &contextXTZ,
+                                                            cryptoFeeBasisCreateCallbackXTZ);
+
+    cryptoUnitGive (unit);
+
+    return feeBasis;
+}
+
 static BRCryptoBoolean
 cryptoFeeBasisIsEqualXTZ (BRCryptoFeeBasis feeBasis1, BRCryptoFeeBasis feeBasis2) {
     BRCryptoFeeBasisXTZ fb1 = cryptoFeeBasisCoerceXTZ (feeBasis1);
@@ -93,6 +183,8 @@ BRCryptoFeeBasisHandlers cryptoFeeBasisHandlersXTZ = {
     cryptoFeeBasisGetCostFactorXTZ,
     cryptoFeeBasisGetPricePerCostFactorXTZ,
     cryptoFeeBasisGetFeeXTZ,
+    cryptoFeeBasisRLPEncodeXTZ,
+    cryptoFeeBasisRLPDecodeXTZ,
     cryptoFeeBasisIsEqualXTZ
 };
 

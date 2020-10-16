@@ -13,6 +13,7 @@
 
 #include "BRCryptoFeeBasis.h"
 #include "BRCryptoBaseP.h"
+#include "support/rlp/BRRlp.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,6 +31,16 @@ typedef BRCryptoAmount
 typedef BRCryptoAmount
 (*BRCryptoFeeBasisGetFeeHandler) (BRCryptoFeeBasis feeBasis);
 
+typedef BRRlpItem
+(*BRCryptoFeeBasisRLPEncodeHandler) (BRCryptoFeeBasis feeBasis,
+                                     BRCryptoNetwork network,
+                                     BRRlpCoder coder);
+
+typedef BRCryptoFeeBasis
+(*BRCryptoFeeBasisRLPDecodeHandler) (BRRlpItem item,
+                                     BRCryptoNetwork network,
+                                     BRRlpCoder coder);
+
 typedef BRCryptoBoolean
 (*BRCryptoFeeBasisIsEqualHandler) (BRCryptoFeeBasis feeBasis1,
                                    BRCryptoFeeBasis feeBasis2);
@@ -39,6 +50,8 @@ typedef struct {
     BRCryptoFeeBasisGetCostFactorHandler getCostFactor;
     BRCryptoFeeBasisGetPricePerCostFactorHandler getPricePerCostFactor;
     BRCryptoFeeBasisGetFeeHandler getFee;
+    BRCryptoFeeBasisRLPEncodeHandler encodeRLP;
+    BRCryptoFeeBasisRLPDecodeHandler decodeRLP;
     BRCryptoFeeBasisIsEqualHandler isEqual;
 } BRCryptoFeeBasisHandlers;
 

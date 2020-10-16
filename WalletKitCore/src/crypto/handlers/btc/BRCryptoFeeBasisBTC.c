@@ -103,6 +103,50 @@ cryptoFeeBasisGetFeeBTC (BRCryptoFeeBasis feeBasis) {
                                uint256Create (btcFeeBasis->fee));
 }
 
+static BRRlpItem
+cryptoFeeBasisRLPEncodeBTC (BRCryptoFeeBasis feeBasis,
+                            BRCryptoNetwork network,
+                            BRRlpCoder coder) {
+    BRCryptoFeeBasisBTC feeBasisBTC = cryptoFeeBasisCoerce(feeBasis);
+
+    return rlpEncodeList (coder, 5,
+                          cryptoBlockChainTypeRLPEncode (feeBasis->type, coder),
+                          cryptoNetworkRLPEncodeUnit (network, feeBasis->unit, coder),
+                          rlpEncodeUInt64 (coder, feeBasisBTC->fee, 0),
+                          rlpEncodeUInt64 (coder, feeBasisBTC->feePerKB, 0),
+                          rlpEncodeDouble (coder, feeBasisBTC->sizeInKB));
+}
+
+static BRCryptoFeeBasis
+cryptoFeeBasisRLPDecodeBTC (BRRlpItem item,
+                            BRCryptoNetwork network,
+                            BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (5 == itemsCount);
+
+    BRCryptoBlockChainType type = cryptoBlockChainTypeRLPDecode (items[0], coder);
+    assert (network->type == type);
+
+    BRCryptoUnit unit = cryptoNetworkRLPDecodeUnit (network, items[1], coder);
+
+    BRCryptoFeeBasisCreateContextBTC contextBTC = {
+        rlpDecodeUInt64 (coder, items[2], 0),
+        rlpDecodeUInt64 (coder, items[3], 0),
+        rlpDecodeDouble (coder, items[4])
+    };
+
+    BRCryptoFeeBasis feeBasis = cryptoFeeBasisAllocAndInit (sizeof (struct BRCryptoFeeBasisBTCRecord),
+                                                            type,
+                                                            unit,
+                                                            &contextBTC,
+                                                            cryptoFeeBasisCreateCallbackBTC);
+
+    cryptoUnitGive (unit);
+
+    return feeBasis;
+}
+
 static BRCryptoBoolean
 cryptoFeeBasisIsEqualBTC (BRCryptoFeeBasis feeBasis1, BRCryptoFeeBasis feeBasis2) {
     BRCryptoFeeBasisBTC fb1 = cryptoFeeBasisCoerce (feeBasis1);
@@ -120,5 +164,7 @@ BRCryptoFeeBasisHandlers cryptoFeeBasisHandlersBTC = {
     cryptoFeeBasisGetCostFactorBTC,
     cryptoFeeBasisGetPricePerCostFactorBTC,
     cryptoFeeBasisGetFeeBTC,
+    cryptoFeeBasisRLPEncodeBTC,
+    cryptoFeeBasisRLPDecodeBTC,
     cryptoFeeBasisIsEqualBTC
 };

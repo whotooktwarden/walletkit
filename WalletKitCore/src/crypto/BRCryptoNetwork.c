@@ -673,37 +673,15 @@ private_extern BRRlpItem
 cryptoNetworkRLPEncodeFeeBasis (BRCryptoNetwork network,
                                 BRCryptoFeeBasis feeBasis,
                                 BRRlpCoder coder) {
-    BRCryptoUnit unit = cryptoFeeBasisGetUnit (feeBasis);
-    const BRRlpItem item = NULL;
-
-    BRRlpItem result = rlpEncodeList2 (coder,
-                                       cryptoNetworkRLPEncodeUnit(network, unit, coder),
-                                       item);
-
-    cryptoUnitGive (unit);
-    // item
-
-    return result;
+    return feeBasis->handlers->encodeRLP (feeBasis, network, coder);
 }
 
 private_extern BRCryptoFeeBasis
 cryptoNetworkRLPDecodeFeeBasis (BRCryptoNetwork network,
                                 BRRlpItem item,
                                 BRRlpCoder coder) {
-    size_t itemsCount = 0;
-    const BRRlpItem *items = rlpDecodeList(coder, item, &itemsCount);
-    assert (3 == itemsCount);
-
-    BRCryptoUnit unit = cryptoNetworkRLPDecodeUnit (network, items[0], coder);
-    BRRlpItem    spec = items[1];
-
-    // decode it
-
-    BRCryptoFeeBasis feeBasis = NULL;
-
-    cryptoUnitGive (unit);
-
-    return feeBasis;
+    const BRCryptoHandlers *handlers = cryptoHandlersLookup (network->type);
+    return handlers->feeBasis->decodeRLP (item, network, coder);
 }
 
 private_extern BRRlpItem
