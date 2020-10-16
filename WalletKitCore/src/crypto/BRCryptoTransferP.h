@@ -143,7 +143,6 @@ cryptoTransferAttributeArrayRelease (BRArrayOf(BRCryptoTransferAttribute) attrib
 static inline void
 cryptoTransferGenerateEvent (BRCryptoTransfer transfer,
                              BRCryptoTransferEvent event) {
-    if (NULL == transfer->listener.listener) return;
     cryptoListenerGenerateTransferEvent(&transfer->listener, transfer, event);
 }
 
