@@ -42,6 +42,9 @@ cryptoHashCreateInternal (uint32_t setValue,
 private_extern OwnershipGiven char *
 cryptoHashStringAsHex (BRCryptoHash hash);
 
+private_extern const uint8_t *
+cryptoHashGetBytes (BRCryptoHash hash,
+                    size_t *bytesCount);
 
 #ifdef __cplusplus
 }

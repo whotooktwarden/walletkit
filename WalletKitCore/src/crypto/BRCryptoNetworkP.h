@@ -253,7 +253,7 @@ cryptoNetworkRLPDecodeFeeBasis (BRCryptoNetwork network,
                                 BRRlpCoder coder);
 
 private_extern BRRlpItem
-cryptoNetworkRLPEncodeAmmount (BRCryptoNetwork network,
+cryptoNetworkRLPEncodeAmount (BRCryptoNetwork network,
                                BRCryptoAmount amount,
                                BRRlpCoder coder);
 

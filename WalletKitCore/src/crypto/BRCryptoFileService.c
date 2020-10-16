@@ -11,6 +11,8 @@
 
 #include "BRCryptoFileService.h"
 
+
+#if 0
 private_extern UInt256
 fileServiceTypeTransferV1Identifier (BRFileServiceContext context,
                                      BRFileService fs,
@@ -175,4 +177,5 @@ fileServiceTypeTransferV2Writer (BRFileServiceContext context,
                                  uint32_t *bytesCount) {
     return fileServiceTypeTransferWriter (context, fs, entity, bytesCount, GENERIC_TRANSFER_VERSION_2);
 }
+#endif
 

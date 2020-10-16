@@ -19,6 +19,7 @@
 extern "C" {
 #endif
 
+#if 0
 #define fileServiceTypeTransactions      "transactions"
 
 typedef enum {
@@ -73,5 +74,6 @@ static BRFileServiceTypeSpecification fileServiceSpecifications[] = {
 };
 static size_t fileServiceSpecificationsCount = (sizeof (fileServiceSpecifications) / sizeof (BRFileServiceTypeSpecification));
 
+#endif
 
 #endif /* BRCryptoFileService_h */

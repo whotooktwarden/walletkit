@@ -79,8 +79,8 @@ crytpWalletManagerCreateFileServiceHBAR (BRCryptoWalletManager manager,
                                          BRFileServiceErrorHandler handler) {
     return fileServiceCreateFromTypeSpecfications (basePath, currency, network,
                                                    context, handler,
-                                                   fileServiceSpecificationsCount,
-                                                   fileServiceSpecifications);
+                                                   0, // fileServiceSpecificationsCount,
+                                                   NULL); //fileServiceSpecifications);
 }
 
 static const BREventType **

@@ -43,18 +43,47 @@ cryptoTransferHasBTC (BRCryptoTransfer transfer,
     return AS_CRYPTO_BOOLEAN (BRTransactionEq (btc, transferBTC->tid));
 }
 
-typedef struct {
-    BRTransaction *tid;
+private_extern BRRlpItem
+cryptoTransferCreateContextRLPEncodeBTC (const BRCryptoTransferCreateContextBTC context,
+                                         BRRlpCoder coder) {
+    size_t tidBytesSize = BRTransactionSerialize (context.tid, NULL, 0);
+    uint8_t tidBytes[tidBytesSize];
+    BRTransactionSerialize (context.tid, tidBytes, tidBytesSize);
 
-    bool isDeleted;
+    return rlpEncodeList (coder, 7,
+                          rlpEncodeBytes  (coder, tidBytes, tidBytesSize),
+                          rlpEncodeUInt64 (coder, context.tid->blockHeight, 0),
+                          rlpEncodeUInt64 (coder, context.tid->timestamp,   0),
+                          rlpEncodeUInt64 (coder, context.isDeleted, 0),
+                          rlpEncodeUInt64 (coder, context.fee,  0),
+                          rlpEncodeUInt64 (coder, context.send, 0),
+                          rlpEncodeUInt64 (coder, context.recv, 0));
+}
 
-    uint64_t fee;
-    uint64_t send;
-    uint64_t recv;
+private_extern BRCryptoTransferCreateContextBTC
+cryptoTransferCreateContextRLPDecodeBTC (BRRlpItem item,
+                                         BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (7 == itemsCount);
 
-} BRCryptoTransferCreateContextBTC;
+    BRRlpData tidData = rlpDecodeBytes (coder, items[0]);
+    BRTransaction *tid = BRTransactionParse (tidData.bytes, tidData.bytesCount);
+    rlpDataRelease(tidData);
 
-static void
+    tid->blockHeight = (uint32_t) rlpDecodeUInt64 (coder, items[1], 0);
+    tid->timestamp   = (uint32_t) rlpDecodeUInt64 (coder, items[2], 0);
+
+    return (BRCryptoTransferCreateContextBTC) {
+        tid,
+        rlpDecodeUInt64 (coder, items[3], 0),
+        rlpDecodeUInt64 (coder, items[4], 0),
+        rlpDecodeUInt64 (coder, items[5], 0),
+        rlpDecodeUInt64 (coder, items[6], 0)
+    };
+}
+
+private_extern void
 cryptoTransferCreateCallbackBTC (BRCryptoTransferCreateContext context,
                                     BRCryptoTransfer transfer) {
     BRCryptoTransferCreateContextBTC *contextBTC = (BRCryptoTransferCreateContextBTC*) context;

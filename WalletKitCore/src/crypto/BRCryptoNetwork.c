@@ -707,9 +707,9 @@ cryptoNetworkRLPDecodeFeeBasis (BRCryptoNetwork network,
 }
 
 private_extern BRRlpItem
-cryptoNetworkRLPEncodeAmmount (BRCryptoNetwork network,
-                               BRCryptoAmount amount,
-                               BRRlpCoder coder) {
+cryptoNetworkRLPEncodeAmount (BRCryptoNetwork network,
+                              BRCryptoAmount amount,
+                              BRRlpCoder coder) {
     BRCryptoUnit unit  = cryptoAmountGetUnit  (amount);
     UInt256      value = cryptoAmountGetValue (amount);
     bool         neg   = CRYPTO_TRUE == cryptoAmountIsNegative(amount);

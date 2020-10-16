@@ -369,6 +369,17 @@ cryptoTransferGetFee (BRCryptoTransfer transfer) {
     return (NULL == feeBasis ? NULL : cryptoFeeBasisGetFee (feeBasis));
 }
 
+private_extern BRCryptoTransferListener
+cryptoTransferGetListener (BRCryptoTransfer transfer) {
+    return transfer->listener;
+}
+
+private_extern void
+cryptoTransferSetListener (BRCryptoTransfer transfer,
+                           BRCryptoTransferListener listener) {
+    transfer->listener = listener;
+}
+
 extern uint8_t *
 cryptoTransferSerializeForSubmission (BRCryptoTransfer transfer,
                                       BRCryptoNetwork  network,
@@ -596,6 +607,90 @@ cryptoTransferStateRelease (BRCryptoTransferState *state) {
     memset (state, 0, sizeof(*state));
 }
 
+static BRRlpItem
+cryptoTransferStateRLPEncode (const BRCryptoTransferState *state,
+                              BRCryptoNetwork network,
+                              BRRlpCoder coder) {
+    switch (state->type) {
+        case CRYPTO_TRANSFER_STATE_INCLUDED:
+            return rlpEncodeList (coder, 7,
+                                  rlpEncodeUInt64 (coder, state->type, 0),
+                                  rlpEncodeUInt64 (coder, state->u.included.blockNumber,      0),
+                                  rlpEncodeUInt64 (coder, state->u.included.transactionIndex, 0),
+                                  rlpEncodeUInt64 (coder, state->u.included.timestamp,        0),
+                                  cryptoNetworkRLPEncodeFeeBasis (network, state->u.included.feeBasis, coder),
+                                  rlpEncodeUInt64 (coder, state->u.included.success,          0),
+                                  rlpEncodeString (coder, state->u.included.error));
+
+        case CRYPTO_TRANSFER_STATE_ERRORED:
+            return rlpEncodeList2 (coder,
+                                   rlpEncodeUInt64 (coder, state->type, 0),
+                                   rlpEncodeList2  (coder,
+                                                    rlpEncodeUInt64 (coder, state->u.errored.error.type, 0),
+                                                    rlpEncodeUInt64 (coder, (uint64_t) state->u.errored.error.u.posix.errnum, 0)));
+
+        default:
+            return rlpEncodeList1 (coder,
+                                   rlpEncodeUInt64 (coder, state->type, 0));
+    }
+}
+
+static BRCryptoTransferState
+cryptoTransferStateRLPDecode (BRRlpItem item,
+                              BRCryptoNetwork network,
+                              BRRlpCoder coder){
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (itemsCount >= 1);
+
+    BRCryptoTransferStateType type = (BRCryptoTransferStateType) rlpDecodeUInt64 (coder, items[0], 0);
+    switch (type) {
+        case CRYPTO_TRANSFER_STATE_INCLUDED: {
+            assert (7 == itemsCount);
+
+            uint64_t blockNumber      = rlpDecodeUInt64 (coder, items[1], 0);
+            uint64_t transactionIndex = rlpDecodeUInt64 (coder, items[2], 0);
+            uint64_t timestamp        = rlpDecodeUInt64 (coder, items[3], 0);
+            BRCryptoFeeBasis feeBasis = cryptoNetworkRLPDecodeFeeBasis (network, items[4], coder);
+            BRCryptoBoolean  success  = (BRCryptoBoolean) rlpDecodeUInt64 (coder, items[5], 0);
+
+            char *error = rlpDecodeString (coder, items[6]);
+
+            BRCryptoTransferState state = cryptoTransferStateIncludedInit (blockNumber,
+                                                                           transactionIndex,
+                                                                           timestamp,
+                                                                           feeBasis,
+                                                                           success,
+                                                                           error);
+
+            free (error);
+            cryptoFeeBasisGive(feeBasis);
+
+            return state;
+        }
+
+        case CRYPTO_TRANSFER_STATE_ERRORED: {
+            assert (2 == itemsCount);
+            size_t errorItemsCount;
+            const BRRlpItem *errorItems = rlpDecodeList (coder, items[1], &errorItemsCount);
+            assert (2 == errorItemsCount);
+
+            BRCryptoTransferSubmitErrorType errType = (BRCryptoTransferSubmitErrorType) rlpDecodeUInt64 (coder, errorItems[0], 0);
+            int errNum = (int) rlpDecodeUInt64 (coder, errorItems[1], 0);
+
+            return cryptoTransferStateErroredInit ((BRCryptoTransferSubmitError) {
+                errType,
+                { .posix = { errNum }}
+            });
+        }
+
+        default: {
+            assert (1 == itemsCount);
+            return cryptoTransferStateInit (type);
+        }
+    }
+}
+
 extern const char *
 cryptoTransferEventTypeString (BRCryptoTransferEventType t) {
     switch (t) {
@@ -610,7 +705,6 @@ cryptoTransferEventTypeString (BRCryptoTransferEventType t) {
     }
     return "<CRYPTO_TRANSFER_EVENT_TYPE_UNKNOWN>";
 }
-
 
 /// MARK: Transaction Submission Error
 
@@ -660,6 +754,8 @@ cryptoTransferSubmitErrorGetMessage (BRCryptoTransferSubmitError *e) {
 
 
 /// MARK: - Transfer Attribute
+
+DECLARE_CRYPTO_GIVE_TAKE (BRCryptoTransferAttribute, cryptoTransferAttribute);
 
 struct BRCryptoTransferAttributeRecord {
     char *key;
@@ -726,4 +822,156 @@ cryptoTransferAttributeArrayRelease (BRArrayOf(BRCryptoTransferAttribute) attrib
     array_free_all (attributes, cryptoTransferAttributeGive);
 }
 
-DECLARE_CRYPTO_GIVE_TAKE (BRCryptoTransferAttribute, cryptoTransferAttribute);
+static BRRlpItem
+cryptoTransferAttributeRLPEncode (BRCryptoTransferAttribute attribute,
+                                  BRRlpCoder coder) {
+    return rlpEncodeList (coder, 3,
+                          rlpEncodeString (coder, attribute->key),
+                          rlpEncodeString (coder, attribute->value),
+                          rlpEncodeUInt64 (coder, attribute->isRequired, 0));
+}
+
+static BRCryptoTransferAttribute
+cryptoTransferAttributeRLPDecode (BRRlpItem item,
+                                  BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (3 == itemsCount);
+
+    char *key = rlpDecodeString (coder, items[0]);
+    char *val = rlpDecodeString (coder, items[1]);
+    BRCryptoBoolean isRequired = (BRCryptoBoolean) rlpDecodeUInt64 (coder, items[2], 0);
+
+    BRCryptoTransferAttribute attribute = cryptoTransferAttributeCreate (key, val, isRequired);
+
+    free (val);
+    free (key);
+
+    return attribute;
+}
+
+static BRRlpItem
+cryptoTransferAttributesRLPEncode (BRArrayOf(BRCryptoTransferAttribute) attributes,
+                                   BRRlpCoder coder) {
+    size_t itemsCount = array_count(attributes);
+    BRRlpItem items[itemsCount];
+
+    for (size_t index = 0; index < itemsCount; index++)
+        items[index] = cryptoTransferAttributeRLPEncode (attributes[index], coder);
+
+    return rlpEncodeListItems (coder, items, itemsCount);
+}
+
+static BRArrayOf(BRCryptoTransferAttribute)
+cryptoTransferAttributesRLPDecode (BRRlpItem item,
+                                   BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+
+    BRArrayOf(BRCryptoTransferAttribute) attributes;
+    array_new(attributes, itemsCount);
+
+    for (size_t index = 0; index < itemsCount; index++)
+    array_add (attributes, cryptoTransferAttributeRLPDecode (items[index], coder));
+
+    return attributes;
+}
+
+
+// MARK: - RLP Encode
+
+private_extern BRRlpItem
+cryptoTransferRLPEncode (BRCryptoTransfer transfer,
+                         BRCryptoNetwork  network,
+                         BRRlpCoder coder) {
+
+    return rlpEncodeList (coder, 11,
+                          rlpEncodeUInt64 (coder, (uint64_t) transfer->sizeInBytes, 0),
+                          cryptoBlockChainTypeRLPEncode     (transfer->type,                       coder),
+                          cryptoNetworkRLPEncodeAddress     (network, transfer->sourceAddress,     coder),
+                          cryptoNetworkRLPEncodeAddress     (network, transfer->targetAddress,     coder),
+                          cryptoTransferStateRLPEncode      (&transfer->state, network,            coder),
+                          cryptoNetworkRLPEncodeUnit        (network, transfer->unit,              coder),
+                          cryptoNetworkRLPEncodeUnit        (network, transfer->unitForFee,        coder),
+                          cryptoNetworkRLPEncodeFeeBasis    (network, transfer->feeBasisEstimated, coder),
+                          rlpEncodeUInt64 (coder, (uint64_t) transfer->direction, 0),
+                          cryptoNetworkRLPEncodeAmount      (network, transfer->amount,            coder),
+                          cryptoTransferAttributesRLPEncode (transfer->attributes,                 coder));
+}
+
+private_extern BRCryptoTransfer
+cryptoTransferRLPDecode (BRRlpItem item,
+                         BRCryptoNetwork  network,
+                         BRCryptoTransferCreateContext  createContext,
+                         BRCryptoTransferCreateCallback createCallback,
+                         BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (11 == itemsCount);
+
+    size_t sizeInBytes = (size_t) rlpDecodeUInt64 (coder, items[0], 0);
+
+    BRCryptoBlockChainType type = cryptoBlockChainTypeRLPDecode (items[1], coder);
+
+    BRCryptoAddress sourceAddress = cryptoNetworkRLPDecodeAddress (network, items[2], coder);
+    BRCryptoAddress targetAddress = cryptoNetworkRLPDecodeAddress (network, items[3], coder);
+
+    BRCryptoTransferState state = cryptoTransferStateRLPDecode (items[4], network, coder);
+
+    BRCryptoUnit unit       = cryptoNetworkRLPDecodeUnit (network, items[5], coder);
+    BRCryptoUnit unitForFee = cryptoNetworkRLPDecodeUnit (network, items[6], coder);
+
+    BRCryptoFeeBasis feeBasisEstimated = cryptoNetworkRLPDecodeFeeBasis (network, items[7], coder);
+
+    BRCryptoTransferDirection direction = (BRCryptoTransferDirection) rlpDecodeUInt64 (coder, items[8], 0);
+
+    BRCryptoAmount amount = cryptoNetworkRLPDecodeAmount (network, items[9], coder);
+
+    BRArrayOf(BRCryptoTransferAttribute) attributes = cryptoTransferAttributesRLPDecode (items[10], coder);
+
+    BRCryptoTransfer transfer = cryptoTransferAllocAndInit (sizeInBytes,
+                                                            type,
+                                                            CRYPTO_TRANSFER_LISTENER_EMPTY,
+                                                            unit,
+                                                            unitForFee,
+                                                            feeBasisEstimated,
+                                                            amount,
+                                                            direction,
+                                                            sourceAddress,
+                                                            targetAddress,
+                                                            state,
+                                                            createContext,
+                                                            createCallback);
+
+    array_free_all (attributes, cryptoTransferAttributeGive);
+    cryptoAmountGive (amount);
+    cryptoFeeBasisGive (feeBasisEstimated);
+    cryptoUnitGive     (unitForFee);
+    cryptoUnitGive     (unit);
+    cryptoTransferStateRelease (&state);
+    cryptoAddressGive  (targetAddress);
+    cryptoAddressGive  (sourceAddress);
+
+    return transfer;
+}
+
+static size_t
+cryptoTransferGetHashValue (BRCryptoTransfer transfer) {
+    BRCryptoHash hash = cryptoTransferGetHash (transfer);
+    size_t value = (size_t) cryptoHashGetHashValue(hash);
+    cryptoHashGive (hash);
+    return value;
+}
+
+private_extern BRSetOf (BRCryptoTransfer)
+cryptoTransferSetCreate (size_t count) {
+    return BRSetNew ((size_t (*) (const void *)) cryptoTransferGetHashValue,
+                     (int (*) (const void *, const void *))cryptoTransferEqual,
+                     count);
+}
+
+private_extern void
+cryptoTransferSetRelease (BRSetOf(BRCryptoTransfer) transfers) {
+    BRSetFreeAll (transfers, (void (*) (void *)) cryptoTransferGive);
+}
+

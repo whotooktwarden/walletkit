@@ -76,3 +76,11 @@ extern int
 cryptoHashGetHashValue (BRCryptoHash hash) {
     return (int) hash->setValue;
 }
+
+private_extern const uint8_t *
+cryptoHashGetBytes (BRCryptoHash hash,
+                    size_t *bytesCount) {
+    assert (NULL != bytesCount);
+    *bytesCount = hash->bytesCount;
+    return hash->bytes;
+}

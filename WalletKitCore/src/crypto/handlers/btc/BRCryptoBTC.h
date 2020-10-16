@@ -69,6 +69,31 @@ extern uint64_t
 cryptoNetworkFeeAsBTC (BRCryptoNetworkFee networkFee);
 
 
+// MARK: - Transfer Create Context
+
+typedef struct {
+    BRTransaction *tid;
+
+    bool isDeleted;
+
+    uint64_t fee;
+    uint64_t send;
+    uint64_t recv;
+
+} BRCryptoTransferCreateContextBTC;
+
+private_extern BRRlpItem
+cryptoTransferCreateContextRLPEncodeBTC (const BRCryptoTransferCreateContextBTC context,
+                                         BRRlpCoder coder);
+
+private_extern BRCryptoTransferCreateContextBTC
+cryptoTransferCreateContextRLPDecodeBTC (BRRlpItem item,
+                                         BRRlpCoder coder);
+
+private_extern void
+cryptoTransferCreateCallbackBTC (BRCryptoTransferCreateContext context,
+                                 BRCryptoTransfer transfer);
+
 // MARK: - Transfer
 
 typedef struct BRCryptoTransferBTCRecord {

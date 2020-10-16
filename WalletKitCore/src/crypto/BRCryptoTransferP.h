@@ -13,11 +13,12 @@
 
 #include <pthread.h>
 #include "support/BRArray.h"
+#include "support/BRSet.h"
 
 #include "BRCryptoTransfer.h"
 #include "BRCryptoNetwork.h"
 #include "BRCryptoBaseP.h"
-
+#include "support/rlp/BRRlp.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -154,6 +155,31 @@ cryptoTransferGetConfirmedFee (BRCryptoTransfer transfer);
 
 private_extern BRCryptoFeeBasis
 cryptoTransferGetFeeBasis (BRCryptoTransfer transfer);
+
+private_extern BRCryptoTransferListener
+cryptoTransferGetListener (BRCryptoTransfer transfer);
+
+private_extern void
+cryptoTransferSetListener (BRCryptoTransfer transfer,
+                           BRCryptoTransferListener listener);
+
+private_extern BRRlpItem
+cryptoTransferRLPEncode (BRCryptoTransfer transfer,
+                         BRCryptoNetwork  network,
+                         BRRlpCoder coder);
+
+private_extern BRCryptoTransfer
+cryptoTransferRLPDecode (BRRlpItem item,
+                         BRCryptoNetwork  network,
+                         BRCryptoTransferCreateContext  createContext,
+                         BRCryptoTransferCreateCallback createCallback,
+                         BRRlpCoder coder);
+
+private_extern BRSetOf (BRCryptoTransfer)
+cryptoTransferSetCreate (size_t count);
+
+private_extern void
+cryptoTransferSetRelease (BRSetOf(BRCryptoTransfer) set);
 
 #ifdef __cplusplus
 }
