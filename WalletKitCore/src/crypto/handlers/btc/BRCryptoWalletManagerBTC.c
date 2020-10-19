@@ -221,7 +221,7 @@ cryptoWalletManagerEstimateFeeBasisBTC (BRCryptoWalletManager cwm,
 
     uint64_t btcFee = (0 == btcAmount ? 0 : BRWalletFeeForTxAmountWithFeePerKb (btcWallet, btcFeePerKB, btcAmount));
 
-    return cryptoFeeBasisCreateAsBTC (wallet->unitForFee, btcFee, btcFeePerKB, CRYPTO_FEE_BASIS_BTC_SIZE_UNKNOWN);
+    return cryptoFeeBasisCreateAsBTC (wallet->type, wallet->unitForFee, btcFee, btcFeePerKB, CRYPTO_FEE_BASIS_BTC_SIZE_UNKNOWN);
 }
 
 static BRCryptoWallet

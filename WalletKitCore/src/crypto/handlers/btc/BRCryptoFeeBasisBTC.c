@@ -17,7 +17,9 @@
 
 static BRCryptoFeeBasisBTC
 cryptoFeeBasisCoerce (BRCryptoFeeBasis feeBasis) {
-    assert (CRYPTO_NETWORK_TYPE_BTC == feeBasis->type);
+    assert (CRYPTO_NETWORK_TYPE_BTC == feeBasis->type ||
+            CRYPTO_NETWORK_TYPE_BCH == feeBasis->type ||
+            CRYPTO_NETWORK_TYPE_BSV == feeBasis->type);
     return (BRCryptoFeeBasisBTC) feeBasis;
 }
 
@@ -39,7 +41,8 @@ cryptoFeeBasisCreateCallbackBTC (BRCryptoFeeBasisCreateContext context,
 }
 
 private_extern BRCryptoFeeBasis
-cryptoFeeBasisCreateAsBTC (BRCryptoUnit unit,
+cryptoFeeBasisCreateAsBTC (BRCryptoBlockChainType type,
+                           BRCryptoUnit unit,
                            uint64_t fee,
                            uint64_t feePerKB,
                            uint32_t sizeInByte) {
@@ -66,7 +69,7 @@ cryptoFeeBasisCreateAsBTC (BRCryptoUnit unit,
     };
     
     return cryptoFeeBasisAllocAndInit (sizeof (struct BRCryptoFeeBasisBTCRecord),
-                                       CRYPTO_NETWORK_TYPE_BTC,
+                                       type,
                                        unit,
                                        &contextBTC,
                                        cryptoFeeBasisCreateCallbackBTC);
@@ -107,6 +110,7 @@ static BRRlpItem
 cryptoFeeBasisRLPEncodeBTC (BRCryptoFeeBasis feeBasis,
                             BRCryptoNetwork network,
                             BRRlpCoder coder) {
+    assert (feeBasis->type == network->type);
     BRCryptoFeeBasisBTC feeBasisBTC = cryptoFeeBasisCoerce(feeBasis);
 
     return rlpEncodeList (coder, 5,

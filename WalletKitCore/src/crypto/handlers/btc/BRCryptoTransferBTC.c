@@ -196,7 +196,8 @@ cryptoTransferCreateAsBTC (BRCryptoTransferListener listener,
     // BRTransaction itself.
 
     BRCryptoFeeBasis feeBasisEstimated =
-    cryptoFeeBasisCreateAsBTC (unitForFee,
+    cryptoFeeBasisCreateAsBTC (type,
+                               unitForFee,
                                (fee == UINT64_MAX ? CRYPTO_FEE_BASIS_BTC_FEE_UNKNOWN        : fee),
                                (fee == UINT64_MAX ? 0                                       : CRYPTO_FEE_BASIS_BTC_FEE_PER_KB_UNKNOWN),
                                (uint32_t) BRTransactionVSize (tid));

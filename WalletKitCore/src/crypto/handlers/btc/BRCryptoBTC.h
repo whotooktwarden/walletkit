@@ -219,7 +219,8 @@ typedef struct BRCryptoFeeBasisBTCRecord {
 #define CRYPTO_FEE_BASIS_BTC_SIZE_UNKNOWN              (UINT32_MAX)
 
 private_extern BRCryptoFeeBasis
-cryptoFeeBasisCreateAsBTC (BRCryptoUnit unit,
+cryptoFeeBasisCreateAsBTC (BRCryptoBlockChainType type,
+                           BRCryptoUnit unit,
                            uint64_t fee,
                            uint64_t feePerKB,
                            uint32_t sizeInByte);

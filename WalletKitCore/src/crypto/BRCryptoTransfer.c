@@ -77,6 +77,8 @@ cryptoTransferAllocAndInit (size_t sizeInBytes,
                             BRCryptoTransferCreateContext  createContext,
                             BRCryptoTransferCreateCallback createCallback) {
     assert (sizeInBytes >= sizeof (struct BRCryptoTransferRecord));
+    assert (type == feeBasisEstimated->type);
+
     BRCryptoTransfer transfer = calloc (1, sizeInBytes);
 
     transfer->type  = type;

@@ -235,7 +235,7 @@ cryptoPaymentProtocolRequestEstimateFeeBasisBTC (BRCryptoPaymentProtocolRequest 
         array_free (outputs);
     }
     
-    return cryptoFeeBasisCreateAsBTC (wallet->unitForFee, btcFee, btcFeePerKB, CRYPTO_FEE_BASIS_BTC_SIZE_UNKNOWN);
+    return cryptoFeeBasisCreateAsBTC (wallet->type, wallet->unitForFee, btcFee, btcFeePerKB, CRYPTO_FEE_BASIS_BTC_SIZE_UNKNOWN);
 }
 
 extern BRCryptoTransfer
