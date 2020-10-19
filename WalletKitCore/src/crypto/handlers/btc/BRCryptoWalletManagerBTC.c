@@ -13,6 +13,7 @@
 #include "crypto/BRCryptoAccountP.h"
 #include "crypto/BRCryptoNetworkP.h"
 #include "crypto/BRCryptoKeyP.h"
+#include "crypto/BRCryptoFileService.h"
 #include "crypto/BRCryptoClientP.h"
 #include "crypto/BRCryptoWalletManagerP.h"
 #include "crypto/BRCryptoWalletSweeperP.h"
@@ -234,9 +235,22 @@ cryptoWalletManagerCreateWalletBTC (BRCryptoWalletManager manager,
     // Get the btcChainParams
     const BRChainParams *btcChainParams = cryptoNetworkAsBTC(manager->network);
 
+    BRArrayOf(BRCryptoTransfer) transfers = initialTransfersLoad (manager);
+    if (NULL == transfers) array_new (transfers, 1);
+
+#if 0
     // Load the BTC transactions from the fileService
     BRArrayOf(BRTransaction*) transactions = initialTransactionsLoadBTC (manager);
     if (NULL == transactions) array_new (transactions, 1);
+#else
+    BRArrayOf(BRTransaction*) transactions;
+    array_new (transactions, array_count(transfers));
+#endif
+
+    for (size_t index = 0; index < array_count(transfers); index++) {
+        BRCryptoTransferBTC transferBTC = cryptoTransferCoerceBTC(transfers[index]);
+        array_add (transactions, transferBTC->tid);
+    }
 
     // Create the BTC wallet
     //
@@ -264,7 +278,7 @@ cryptoWalletManagerCreateWalletBTC (BRCryptoWalletManager manager,
 
     BRCryptoWalletFileServiceContext fileServiceContext = {
         manager->fileService,
-        fileServiceTypeTransactionsBTC
+        fileServiceTypeTransfers
     };
 
     BRCryptoWallet wallet = cryptoWalletCreateAsBTC (manager->type,
@@ -275,6 +289,8 @@ cryptoWalletManagerCreateWalletBTC (BRCryptoWalletManager manager,
                                                      btcWallet);
     cryptoWalletManagerAddWallet (manager, wallet);
 
+    // TODO: Transfers could be a Superset of Wallet Transactions
+#if 0
     // Process existing btcTransactions in the btcWallet into BRCryptoTransfers
     size_t btcTransactionsCount = BRWalletTransactions(btcWallet, NULL, 0);
     BRTransaction *btcTransactions[btcTransactionsCount > 0 ? btcTransactionsCount : 1]; // avoid a static analysis error
@@ -288,6 +304,12 @@ cryptoWalletManagerCreateWalletBTC (BRCryptoWalletManager manager,
                                                                BRTransactionCopy(btcTransactions[index]),
                                                                manager->type);
         cryptoWalletAddTransfer (wallet, transfer);
+    }
+#endif
+
+    for (size_t index = 0; index < array_count(transfers); index++) {
+        cryptoTransferSetListener (transfers[index], wallet->listenerTransfer);
+        cryptoWalletAddTransfer (wallet, transfers[index]);
     }
 
     cryptoUnitGive (unitAsDefault);

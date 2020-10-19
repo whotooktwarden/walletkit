@@ -12,6 +12,77 @@
 #include "crypto/BRCryptoAmountP.h"
 #include "ethereum/util/BRUtilMath.h"
 
+// MARK: - Transfer Create Context
+
+typedef struct {
+    BRTransaction *tid;
+
+    bool isDeleted;
+
+    uint64_t fee;
+    uint64_t send;
+    uint64_t recv;
+
+} BRCryptoTransferCreateContextBTC;
+
+static void
+cryptoTransferCreateCallbackBTC (BRCryptoTransferCreateContext context,
+                                 BRCryptoTransfer transfer) {
+    BRCryptoTransferCreateContextBTC *contextBTC = (BRCryptoTransferCreateContextBTC*) context;
+    BRCryptoTransferBTC transferBTC = cryptoTransferCoerceBTC (transfer);
+
+    transferBTC->tid  = contextBTC->tid;
+
+    transferBTC->isDeleted  = contextBTC->isDeleted;
+
+    // cache the values that require the wallet
+    transferBTC->fee  = contextBTC->fee;
+    transferBTC->recv = contextBTC->recv;
+    transferBTC->send = contextBTC->send;
+}
+
+static BRRlpItem
+cryptoTransferCreateContextRLPEncodeBTC (const BRCryptoTransferCreateContextBTC context,
+                                         BRRlpCoder coder) {
+    size_t tidBytesSize = BRTransactionSerialize (context.tid, NULL, 0);
+    uint8_t tidBytes[tidBytesSize];
+    BRTransactionSerialize (context.tid, tidBytes, tidBytesSize);
+
+    return rlpEncodeList (coder, 7,
+                          rlpEncodeBytes  (coder, tidBytes, tidBytesSize),
+                          rlpEncodeUInt64 (coder, context.tid->blockHeight, 0),
+                          rlpEncodeUInt64 (coder, context.tid->timestamp,   0),
+                          rlpEncodeUInt64 (coder, context.isDeleted, 0),
+                          rlpEncodeUInt64 (coder, context.fee,  0),
+                          rlpEncodeUInt64 (coder, context.send, 0),
+                          rlpEncodeUInt64 (coder, context.recv, 0));
+}
+
+static BRCryptoTransferCreateContextBTC
+cryptoTransferCreateContextRLPDecodeBTC (BRRlpItem item,
+                                         BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (7 == itemsCount);
+
+    BRRlpData tidData = rlpDecodeBytes (coder, items[0]);
+    BRTransaction *tid = BRTransactionParse (tidData.bytes, tidData.bytesCount);
+    rlpDataRelease(tidData);
+
+    tid->blockHeight = (uint32_t) rlpDecodeUInt64 (coder, items[1], 0);
+    tid->timestamp   = (uint32_t) rlpDecodeUInt64 (coder, items[2], 0);
+
+    return (BRCryptoTransferCreateContextBTC) {
+        tid,
+        rlpDecodeUInt64 (coder, items[3], 0),
+        rlpDecodeUInt64 (coder, items[4], 0),
+        rlpDecodeUInt64 (coder, items[5], 0),
+        rlpDecodeUInt64 (coder, items[6], 0)
+    };
+}
+
+// MARK: - Transfer
+
 static BRCryptoTransferDirection
 cryptoTransferDirectionFromBTC (uint64_t send, uint64_t recv, uint64_t fee);
 
@@ -43,61 +114,6 @@ cryptoTransferHasBTC (BRCryptoTransfer transfer,
     return AS_CRYPTO_BOOLEAN (BRTransactionEq (btc, transferBTC->tid));
 }
 
-private_extern BRRlpItem
-cryptoTransferCreateContextRLPEncodeBTC (const BRCryptoTransferCreateContextBTC context,
-                                         BRRlpCoder coder) {
-    size_t tidBytesSize = BRTransactionSerialize (context.tid, NULL, 0);
-    uint8_t tidBytes[tidBytesSize];
-    BRTransactionSerialize (context.tid, tidBytes, tidBytesSize);
-
-    return rlpEncodeList (coder, 7,
-                          rlpEncodeBytes  (coder, tidBytes, tidBytesSize),
-                          rlpEncodeUInt64 (coder, context.tid->blockHeight, 0),
-                          rlpEncodeUInt64 (coder, context.tid->timestamp,   0),
-                          rlpEncodeUInt64 (coder, context.isDeleted, 0),
-                          rlpEncodeUInt64 (coder, context.fee,  0),
-                          rlpEncodeUInt64 (coder, context.send, 0),
-                          rlpEncodeUInt64 (coder, context.recv, 0));
-}
-
-private_extern BRCryptoTransferCreateContextBTC
-cryptoTransferCreateContextRLPDecodeBTC (BRRlpItem item,
-                                         BRRlpCoder coder) {
-    size_t itemsCount;
-    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
-    assert (7 == itemsCount);
-
-    BRRlpData tidData = rlpDecodeBytes (coder, items[0]);
-    BRTransaction *tid = BRTransactionParse (tidData.bytes, tidData.bytesCount);
-    rlpDataRelease(tidData);
-
-    tid->blockHeight = (uint32_t) rlpDecodeUInt64 (coder, items[1], 0);
-    tid->timestamp   = (uint32_t) rlpDecodeUInt64 (coder, items[2], 0);
-
-    return (BRCryptoTransferCreateContextBTC) {
-        tid,
-        rlpDecodeUInt64 (coder, items[3], 0),
-        rlpDecodeUInt64 (coder, items[4], 0),
-        rlpDecodeUInt64 (coder, items[5], 0),
-        rlpDecodeUInt64 (coder, items[6], 0)
-    };
-}
-
-private_extern void
-cryptoTransferCreateCallbackBTC (BRCryptoTransferCreateContext context,
-                                    BRCryptoTransfer transfer) {
-    BRCryptoTransferCreateContextBTC *contextBTC = (BRCryptoTransferCreateContextBTC*) context;
-    BRCryptoTransferBTC transferBTC = cryptoTransferCoerceBTC (transfer);
-
-    transferBTC->tid  = contextBTC->tid;
-
-    transferBTC->isDeleted  = contextBTC->isDeleted;
-
-    // cache the values that require the wallet
-    transferBTC->fee  = contextBTC->fee;
-    transferBTC->recv = contextBTC->recv;
-    transferBTC->send = contextBTC->send;
-}
 
 extern BRCryptoTransfer
 cryptoTransferCreateAsBTC (BRCryptoTransferListener listener,
@@ -257,6 +273,42 @@ cryptoTransferSerializeBTC (BRCryptoTransfer transfer,
     return serialization;
 }
 
+static BRRlpItem
+cryptoTransferRLPEncodeBTC (BRCryptoTransfer transfer,
+                            BRCryptoNetwork network,
+                            BRRlpCoder coder) {
+    BRCryptoTransferBTC  transferBTC = cryptoTransferCoerceBTC (transfer);
+
+    BRCryptoTransferCreateContextBTC createContext = {
+        transferBTC->tid,
+        transferBTC->isDeleted,
+        transferBTC->fee,
+        transferBTC->send,
+        transferBTC->recv
+    };
+
+    return rlpEncodeList2 (coder,
+                           cryptoTransferRLPEncodeBase (transfer, network, coder),
+                           cryptoTransferCreateContextRLPEncodeBTC (createContext, coder));
+}
+
+static BRCryptoTransfer
+cryptoTransferRLPDecodeBTC (BRRlpItem item,
+                            BRCryptoNetwork network,
+                            BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (2 == itemsCount);
+
+    BRCryptoTransferCreateContextBTC createContextBTC = cryptoTransferCreateContextRLPDecodeBTC (items[1], coder);
+
+    return cryptoTransferRLPDecodeBase (items[0],
+                                        network,
+                                        &createContextBTC,
+                                        cryptoTransferCreateCallbackBTC,
+                                        coder);
+}
+
 static int
 cryptoTransferIsEqualBTC (BRCryptoTransfer tb1, BRCryptoTransfer tb2) {
     BRCryptoTransferBTC t1 = cryptoTransferCoerceBTC(tb1);
@@ -321,6 +373,8 @@ BRCryptoTransferHandlers cryptoTransferHandlersBTC = {
     cryptoTransferGetHashBTC,
     cryptoTransferSerializeBTC,
     NULL, // getBytesForFeeEstimate
+    cryptoTransferRLPEncodeBTC,
+    cryptoTransferRLPDecodeBTC,
     cryptoTransferIsEqualBTC
 };
 
@@ -329,6 +383,8 @@ BRCryptoTransferHandlers cryptoTransferHandlersBCH = {
     cryptoTransferGetHashBTC,
     cryptoTransferSerializeBTC,
     NULL, // getBytesForFeeEstimate
+    cryptoTransferRLPEncodeBTC,
+    cryptoTransferRLPDecodeBTC,
     cryptoTransferIsEqualBTC
 };
 
@@ -337,5 +393,7 @@ BRCryptoTransferHandlers cryptoTransferHandlersBSV = {
     cryptoTransferGetHashBTC,
     cryptoTransferSerializeBTC,
     NULL, // getBytesForFeeEstimate
+    cryptoTransferRLPEncodeBTC,
+    cryptoTransferRLPDecodeBTC,
     cryptoTransferIsEqualBTC
 };

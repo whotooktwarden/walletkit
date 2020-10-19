@@ -11,6 +11,7 @@
 #ifndef BRCryptoFileService_h
 #define BRCryptoFileService_h
 
+#include "support/BRArray.h"
 #include "BRCryptoBase.h"
 #include "ethereum/util/BRUtil.h"
 #include "support/BRFileService.h"
@@ -19,13 +20,13 @@
 extern "C" {
 #endif
 
-#if 0
-#define fileServiceTypeTransactions      "transactions"
+#define fileServiceTypeTransfers      "transfers"
 
 typedef enum {
-    GENERIC_TRANSFER_VERSION_1,
-    GENERIC_TRANSFER_VERSION_2,
-} BRGenericFileServiceTransferVersion;
+    CRYPTO_FILE_SERVICE_TRANSFER_BASE_VERSION_1,
+} BRCryptoFileServiceTransferBaseVersion;
+
+#define cryptoFileServiceTransferVersionCreate( base, type )    ((BRFileServiceVersion) (((base) << 4) | (type)))
 
 private_extern UInt256
 fileServiceTypeTransferV1Identifier (BRFileServiceContext context,
@@ -44,36 +45,7 @@ fileServiceTypeTransferV1Writer (BRFileServiceContext context,
                                  const void* entity,
                                  uint32_t *bytesCount);
 
-private_extern uint8_t *
-fileServiceTypeTransferV2Writer (BRFileServiceContext context,
-                                 BRFileService fs,
-                                 const void* entity,
-                                 uint32_t *bytesCount);
-
-static BRFileServiceTypeSpecification fileServiceSpecifications[] = {
-    {
-        fileServiceTypeTransactions,
-        GENERIC_TRANSFER_VERSION_2, // current version
-        2,
-        {
-            {
-                GENERIC_TRANSFER_VERSION_1,
-                fileServiceTypeTransferV1Identifier,
-                fileServiceTypeTransferV1Reader,
-                fileServiceTypeTransferV1Writer
-            },
-
-            {
-                GENERIC_TRANSFER_VERSION_2,
-                fileServiceTypeTransferV1Identifier,
-                fileServiceTypeTransferV1Reader,
-                fileServiceTypeTransferV2Writer
-            },
-        }
-    }
-};
-static size_t fileServiceSpecificationsCount = (sizeof (fileServiceSpecifications) / sizeof (BRFileServiceTypeSpecification));
-
-#endif
+private_extern BRArrayOf(BRCryptoTransfer)
+initialTransfersLoad (BRCryptoWalletManager manager);
 
 #endif /* BRCryptoFileService_h */

@@ -881,10 +881,9 @@ cryptoTransferAttributesRLPDecode (BRRlpItem item,
 // MARK: - RLP Encode
 
 private_extern BRRlpItem
-cryptoTransferRLPEncode (BRCryptoTransfer transfer,
-                         BRCryptoNetwork  network,
-                         BRRlpCoder coder) {
-
+cryptoTransferRLPEncodeBase (BRCryptoTransfer transfer,
+                             BRCryptoNetwork  network,
+                             BRRlpCoder coder) {
     return rlpEncodeList (coder, 11,
                           rlpEncodeUInt64 (coder, (uint64_t) transfer->sizeInBytes, 0),
                           cryptoBlockChainTypeRLPEncode     (transfer->type,                       coder),
@@ -900,11 +899,11 @@ cryptoTransferRLPEncode (BRCryptoTransfer transfer,
 }
 
 private_extern BRCryptoTransfer
-cryptoTransferRLPDecode (BRRlpItem item,
-                         BRCryptoNetwork  network,
-                         BRCryptoTransferCreateContext  createContext,
-                         BRCryptoTransferCreateCallback createCallback,
-                         BRRlpCoder coder) {
+cryptoTransferRLPDecodeBase (BRRlpItem item,
+                             BRCryptoNetwork  network,
+                             BRCryptoTransferCreateContext  createContext,
+                             BRCryptoTransferCreateCallback createCallback,
+                             BRRlpCoder coder) {
     size_t itemsCount;
     const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
     assert (11 == itemsCount);
@@ -953,6 +952,21 @@ cryptoTransferRLPDecode (BRRlpItem item,
     cryptoAddressGive  (sourceAddress);
 
     return transfer;
+}
+
+private_extern BRRlpItem
+cryptoTransferRLPEncode (BRCryptoTransfer transfer,
+                         BRCryptoNetwork  network,
+                         BRRlpCoder coder) {
+    return transfer->handlers->encodeRLP (transfer, network, coder);
+}
+
+private_extern BRCryptoTransfer
+cryptoTransferRLPDecode (BRRlpItem item,
+                         BRCryptoNetwork  network,
+                         BRRlpCoder coder) {
+    const BRCryptoHandlers *handlers = cryptoHandlersLookup (network->type);
+    return handlers->transfer->decodeRLP (item, network, coder);
 }
 
 static size_t

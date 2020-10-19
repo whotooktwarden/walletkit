@@ -9,6 +9,17 @@
 //  See the CONTRIBUTORS file at the project root for a list of contributors.
 //
 #include "BRCryptoBTC.h"
+#include "crypto/BRCryptoFileService.h"
+
+/// MARK: - Transfer File Service
+
+enum {
+    CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1_BTC
+};
+
+#define CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1  \
+  cryptoFileServiceTransferVersionCreate (CRYPTO_FILE_SERVICE_TRANSFER_BASE_VERSION_1, \
+                                          CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1_BTC)
 
 /// MARK: - Transaction File Service
 
@@ -96,119 +107,6 @@ initialTransactionsLoadBTC (BRCryptoWalletManager manager) {
     _peer_log ("BWM: loaded %zu transactions\n", transactionsCount);
     return transactions;
 }
-
-/// MARK: - Transfer File Service
-
-#define fileServiceTypeTransfers     "transfers"
-
-enum {
-    WALLET_MANAGER_TRANSFER_VERSION_1
-};
-
-private_extern UInt256
-fileServiceTypeTransferV1Identifier (BRFileServiceContext context,
-                                     BRFileService fs,
-                                     const void *entity) {
-    BRCryptoWalletManager manager = (BRCryptoWalletManager) context; (void) manager;
-    BRCryptoTransfer     transfer = (BRCryptoTransfer) entity;
-
-    BRCryptoHash transferHash = cryptoTransferGetHash(transfer);
-
-    size_t bytesCount;
-    const uint8_t *bytes = cryptoHashGetBytes (transferHash, &bytesCount);
-    if (bytesCount > sizeof (UInt256)) bytesCount = sizeof (UInt256);
-
-    UInt256 identifier = UINT256_ZERO;
-    memcpy (identifier.u8, bytes, bytesCount);
-
-    cryptoHashGive (transferHash);
-
-    return identifier;
-}
-
-private_extern void *
-fileServiceTypeTransferV1Reader (BRFileServiceContext context,
-                                 BRFileService fs,
-                                 uint8_t *bytes,
-                                 uint32_t bytesCount) {
-    BRCryptoWalletManager manager = (BRCryptoWalletManager) context;
-
-    BRRlpCoder coder = rlpCoderCreate();
-    BRRlpData  data  = (BRRlpData) { bytesCount, bytes };
-    BRRlpItem  item  = rlpDataGetItem (coder, data);
-
-    size_t itemsCount;
-    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
-    assert (2 == itemsCount);
-
-    BRCryptoTransferCreateContextBTC createContextBTC = cryptoTransferCreateContextRLPDecodeBTC (items[1], coder);
-
-
-    BRCryptoTransfer transfer = cryptoTransferRLPDecode (items[0],
-                                                         manager->network,
-                                                         &createContextBTC,
-                                                         cryptoTransferCreateCallbackBTC,
-                                                         coder);
-
-    rlpItemRelease (coder, item);
-    rlpCoderRelease(coder);
-
-    return transfer;
-}
-
-private_extern uint8_t *
-fileServiceTypeTransferV1Writer (BRFileServiceContext context,
-                                 BRFileService fs,
-                                 const void* entity,
-                                 uint32_t *bytesCount) {
-    BRCryptoWalletManager manager    = (BRCryptoWalletManager) context;
-    BRCryptoTransfer     transfer    = (BRCryptoTransfer) entity;
-    BRCryptoTransferBTC  transferBTC = cryptoTransferCoerceBTC (transfer);
-
-    BRCryptoTransferCreateContextBTC createContext = {
-        transferBTC->tid,
-        transferBTC->isDeleted,
-        transferBTC->fee,
-        transferBTC->send,
-        transferBTC->recv
-    };
-
-    BRRlpCoder coder = rlpCoderCreate();
-    BRRlpItem  item  = rlpEncodeList2 (coder,
-                                       cryptoTransferRLPEncode (transfer, manager->network, coder),
-                                       cryptoTransferCreateContextRLPEncodeBTC (createContext, coder));
-
-    BRRlpData data = rlpItemGetData (coder, item);
-
-    rlpItemRelease (coder, item);
-    rlpCoderRelease (coder);
-
-    *bytesCount = (uint32_t) data.bytesCount;
-    return data.bytes;
-}
-
-extern BRArrayOf(BRCryptoTransfer)
-initialTransfersLoadBTC (BRCryptoWalletManager manager) {
-    BRSetOf(BRCryptoTransfer*) transferSet = cryptoTransferSetCreate(100);
-    if (1 != fileServiceLoad (manager->fileService, transferSet, fileServiceTypeTransfers, 1)) {
-        cryptoTransferSetRelease(transferSet);
-        _peer_log ("BWM: failed to load transactions");
-        return NULL;
-    }
-
-    size_t transfersCount = BRSetCount(transferSet);
-
-    BRArrayOf(BRCryptoTransfer) transfers;
-    array_new (transfers, transfersCount);
-    array_set_count(transfers, transfersCount);
-
-    BRSetAll(transferSet, (void**) transfers, transfersCount);
-    BRSetFree(transferSet); // Don't release => don't give transfers in `transfers`
-
-    _peer_log ("BWM: loaded %zu transfers\n", transfersCount);
-    return transfers;
-}
-
 
 ///
 /// MARK: - Block File Service
@@ -398,11 +296,11 @@ initialPeersLoadBTC (BRCryptoWalletManager manager) {
 static BRFileServiceTypeSpecification fileServiceSpecifications[] = {
     {
         fileServiceTypeTransfers,
-        WALLET_MANAGER_TRANSFER_VERSION_1,
+        CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1,
         1,
         {
             {
-                WALLET_MANAGER_TRANSFER_VERSION_1,
+                CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1,
                 fileServiceTypeTransferV1Identifier,
                 fileServiceTypeTransferV1Reader,
                 fileServiceTypeTransferV1Writer

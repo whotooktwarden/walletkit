@@ -58,6 +58,16 @@ typedef uint8_t *
                                                   BRCryptoNetwork  network,
                                                   size_t *bytesCount);
 
+typedef BRRlpItem
+(*BRCryptoTransferRLPEncodeHandler) (BRCryptoTransfer transfer,
+                                     BRCryptoNetwork network,
+                                     BRRlpCoder coder);
+
+typedef BRCryptoTransfer
+(*BRCryptoTransferRLPDecodeHandler) (BRRlpItem item,
+                                     BRCryptoNetwork network,
+                                     BRRlpCoder coder);
+
 typedef int // 1 if equal, 0 if not
 (*BRCryptoTransferIsEqualHandler) (BRCryptoTransfer t1,
                                    BRCryptoTransfer t2);
@@ -67,6 +77,8 @@ typedef struct {
     BRCryptoTransferGetHashHandler getHash;
     BRCryptoTransferSerializeHandler serialize;
     BRCryptoTransferGetBytesForFeeEstimateHandler getBytesForFeeEstimate;
+    BRCryptoTransferRLPEncodeHandler encodeRLP;
+    BRCryptoTransferRLPDecodeHandler decodeRLP;
     BRCryptoTransferIsEqualHandler isEqual;
 } BRCryptoTransferHandlers;
 
@@ -164,15 +176,25 @@ cryptoTransferSetListener (BRCryptoTransfer transfer,
                            BRCryptoTransferListener listener);
 
 private_extern BRRlpItem
+cryptoTransferRLPEncodeBase (BRCryptoTransfer transfer,
+                             BRCryptoNetwork  network,
+                             BRRlpCoder coder);
+
+private_extern BRRlpItem
 cryptoTransferRLPEncode (BRCryptoTransfer transfer,
                          BRCryptoNetwork  network,
                          BRRlpCoder coder);
 
 private_extern BRCryptoTransfer
+cryptoTransferRLPDecodeBase (BRRlpItem item,
+                             BRCryptoNetwork  network,
+                             BRCryptoTransferCreateContext  createContext,
+                             BRCryptoTransferCreateCallback createCallback,
+                             BRRlpCoder coder);
+
+private_extern BRCryptoTransfer
 cryptoTransferRLPDecode (BRRlpItem item,
                          BRCryptoNetwork  network,
-                         BRCryptoTransferCreateContext  createContext,
-                         BRCryptoTransferCreateCallback createCallback,
                          BRRlpCoder coder);
 
 private_extern BRSetOf (BRCryptoTransfer)

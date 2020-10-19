@@ -1544,7 +1544,7 @@ BRPeerManager *BRPeerManagerNew(const BRChainParams *params, BRWallet *wallet, u
         if (i == 0 || block->timestamp + 7*24*60*60 < manager->earliestKeyTime) manager->lastBlock = block;
     }
 
-    _peer_log("BPM: checkpoint found with %u last block height\n",
+    _peer_log("BTC: PeerManager: checkpoint found with %u last block height\n",
               (manager->lastBlock ? manager->lastBlock->height : (uint32_t) -1));
 
     block = NULL;
@@ -1566,7 +1566,7 @@ BRPeerManager *BRPeerManagerNew(const BRChainParams *params, BRWallet *wallet, u
         block = BRSetGet(manager->orphans, &orphan);
     }
 
-    _peer_log("BPM: initialized with %u last block height", manager->lastBlock->height);
+    _peer_log("BTC: PeerManager: initialized with %u last block height\n", manager->lastBlock->height);
 
     array_new(manager->txRelays, 10);
     array_new(manager->txRequests, 10);
@@ -1771,7 +1771,7 @@ static int _BRPeerManagerRescan(BRPeerManager *manager, BRMerkleBlock *newLastBl
     if (NULL == newLastBlock) return 0;
 
     manager->lastBlock = newLastBlock;
-    _peer_log("BPM: rescanning with %u last block height", manager->lastBlock->height);
+    _peer_log("BTC: PeerManager: rescanning with %u last block height\n", manager->lastBlock->height);
 
     if (manager->downloadPeer) { // disconnect the current download peer so a new random one will be selected
         for (size_t i = array_count(manager->peers); i > 0; i--) {

@@ -10,23 +10,29 @@
 //
 
 #include "BRCryptoFileService.h"
+#include "BRCryptoHashP.h"
+#include "BRCryptoTransferP.h"
+#include "BRCryptoWalletManagerP.h"
 
-
-#if 0
 private_extern UInt256
 fileServiceTypeTransferV1Identifier (BRFileServiceContext context,
                                      BRFileService fs,
                                      const void *entity) {
-#ifdef REFACTOR
-    BRGenericTransfer transfer = (BRGenericTransfer) entity;
-    BRGenericHash     hash     = genTransferGetHash(transfer);
+    BRCryptoWalletManager manager = (BRCryptoWalletManager) context; (void) manager;
+    BRCryptoTransfer     transfer = (BRCryptoTransfer) entity;
 
-    assert (hash.bytesCount >= sizeof(UInt256));
-    UInt256 *result = (UInt256*) hash.bytes;
+    BRCryptoHash transferHash = cryptoTransferGetHash(transfer);
 
-    return *result;
-#endif
-    return UINT256_ZERO;
+    size_t bytesCount;
+    const uint8_t *bytes = cryptoHashGetBytes (transferHash, &bytesCount);
+    if (bytesCount > sizeof (UInt256)) bytesCount = sizeof (UInt256);
+
+    UInt256 identifier = UINT256_ZERO;
+    memcpy (identifier.u8, bytes, bytesCount);
+
+    cryptoHashGive (transferHash);
+
+    return identifier;
 }
 
 private_extern void *
@@ -34,132 +40,18 @@ fileServiceTypeTransferV1Reader (BRFileServiceContext context,
                                  BRFileService fs,
                                  uint8_t *bytes,
                                  uint32_t bytesCount) {
-#ifdef REFACTOR
-    BRGenericManager gwm = (BRGenericManager) context;
+    BRCryptoWalletManager manager = (BRCryptoWalletManager) context;
 
     BRRlpCoder coder = rlpCoderCreate();
     BRRlpData  data  = (BRRlpData) { bytesCount, bytes };
     BRRlpItem  item  = rlpDataGetItem (coder, data);
 
-    size_t itemsCount;
-    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
-    assert (9 == itemsCount);
-
-    BRRlpData hashData = rlpDecodeBytes(coder, items[0]);
-    char *strUids   = rlpDecodeString  (coder, items[1]);
-    char *strSource = rlpDecodeString  (coder, items[2]);
-    char *strTarget = rlpDecodeString  (coder, items[3]);
-    UInt256 amount  = rlpDecodeUInt256 (coder, items[4], 0);
-    char *currency  = rlpDecodeString  (coder, items[5]);
-    BRGenericFeeBasis feeBasis = genFeeBasisDecode (items[6], coder);
-    BRGenericTransferState state = genTransferStateDecode (items[7], coder);
-    BRArrayOf(BRGenericTransferAttribute) attributes = genTransferAttributesDecode(items[8], coder);
-
-    BRGenericHash hash = genericHashCreate(hashData.bytesCount, hashData.bytes);
-
-    char *strHash   = genericHashAsString (hash);
-    char *strAmount = uint256CoerceString (amount, 10);
-
-    int overflow = 0;
-    UInt256 fee = genFeeBasisGetFee (&feeBasis, &overflow);
-    assert (!overflow);
-    char *strFee = uint256CoerceString (fee,    10);
-
-    uint64_t timestamp = (GENERIC_TRANSFER_STATE_INCLUDED == state.type
-                          ? state.u.included.timestamp
-                          : GENERIC_TRANSFER_TIMESTAMP_UNKNOWN);
-
-    uint64_t blockHeight = (GENERIC_TRANSFER_STATE_INCLUDED == state.type
-                            ? state.u.included.blockNumber
-                            : GENERIC_TRANSFER_BLOCK_NUMBER_UNKNOWN);
-
-    // Derive `wallet` from currency
-    BRGenericWallet  wallet = genManagerGetPrimaryWallet (gwm);
-
-    BRGenericTransfer transfer = genManagerRecoverTransfer (gwm, wallet, strHash,
-                                                            strUids,
-                                                            strSource,
-                                                            strTarget,
-                                                            strAmount,
-                                                            currency,
-                                                            strFee,
-                                                            timestamp,
-                                                            blockHeight,
-                                                            GENERIC_TRANSFER_STATE_ERRORED == state.type);
-
-    // Set the transfer's `state` and `attributes` from the read values.  For`state`, this will
-    // overwrite what `genManagerRecoverTransfer()` assigned but will be correct with the saved
-    // values.  Later, perhaps based on a BlocksetDB query, the state change to 'included error'.
-    genTransferSetState (transfer, state);
-    genTransferSetAttributes (transfer, attributes);
-
-    genTransferAttributeReleaseAll(attributes);
-    free (strFee);
-    free (strAmount);
-    free (strHash);
-    free (currency);
-    free (strTarget);
-    free (strSource);
-    free (strUids);
+    BRCryptoTransfer transfer = cryptoTransferRLPDecode (item, manager->network, coder);
 
     rlpItemRelease (coder, item);
     rlpCoderRelease(coder);
 
     return transfer;
-#endif
-    return NULL;
-}
-
-private_extern uint8_t *
-fileServiceTypeTransferWriter (BRFileServiceContext context,
-                               BRFileService fs,
-                               const void* entity,
-                               uint32_t *bytesCount,
-                               BRGenericFileServiceTransferVersion version) {
-#ifdef REFACTOR
-    BRGenericTransfer transfer = (BRGenericTransfer) entity;
-
-    BRGenericHash    hash   = genTransferGetHash (transfer);
-    BRGenericAddress source = genTransferGetSourceAddress (transfer);
-    BRGenericAddress target = genTransferGetTargetAddress (transfer);
-    UInt256 amount = genTransferGetAmount (transfer);
-    BRGenericFeeBasis feeBasis = genTransferGetFeeBasis(transfer);
-    BRGenericTransferState state = genTransferGetState (transfer);
-
-    // Code it Up!
-    BRRlpCoder coder = rlpCoderCreate();
-
-    char *strSource = genAddressAsString(source);
-    char *strTarget = genAddressAsString(target);
-
-    BRGenericTransferStateEncodeVersion stateEncodeVersion =
-        (GENERIC_TRANSFER_VERSION_1 == version ? GEN_TRANSFER_STATE_ENCODE_V1
-         : (GENERIC_TRANSFER_VERSION_2 == version ? GEN_TRANSFER_STATE_ENCODE_V2
-            : GEN_TRANSFER_STATE_ENCODE_V1));
-
-    BRRlpItem item = rlpEncodeList (coder, 9,
-                                    rlpEncodeBytes (coder, hash.bytes, hash.bytesCount),
-                                    rlpEncodeString (coder, transfer->uids),
-                                    rlpEncodeString (coder, strSource),
-                                    rlpEncodeString (coder, strTarget),
-                                    rlpEncodeUInt256 (coder, amount, 0),
-                                    rlpEncodeString (coder, cryptoNetworkCanonicalTypeGetCurrencyCode(transfer->type)),
-                                    genFeeBasisEncode (feeBasis, coder),
-                                    genTransferStateEncode (state, stateEncodeVersion, coder),
-                                    genTransferAttributesEncode (transfer->attributes, coder));
-
-    BRRlpData data = rlpItemGetData (coder, item);
-
-    rlpItemRelease (coder, item);
-    rlpCoderRelease (coder);
-
-    free (strSource); genAddressRelease (source);
-    free (strTarget); genAddressRelease (target);
-
-    *bytesCount = (uint32_t) data.bytesCount;
-    return data.bytes;
-#endif
-    return NULL;
 }
 
 private_extern uint8_t *
@@ -167,15 +59,38 @@ fileServiceTypeTransferV1Writer (BRFileServiceContext context,
                                  BRFileService fs,
                                  const void* entity,
                                  uint32_t *bytesCount) {
-    return fileServiceTypeTransferWriter (context, fs, entity, bytesCount, GENERIC_TRANSFER_VERSION_1);
+    BRCryptoWalletManager manager    = (BRCryptoWalletManager) context;
+    BRCryptoTransfer     transfer    = (BRCryptoTransfer) entity;
+
+    BRRlpCoder coder = rlpCoderCreate();
+    BRRlpItem item   = cryptoTransferRLPEncode (transfer, manager->network, coder);
+    BRRlpData data   = rlpItemGetData (coder, item);
+
+    rlpItemRelease (coder, item);
+    rlpCoderRelease (coder);
+
+    *bytesCount = (uint32_t) data.bytesCount;
+    return data.bytes;
 }
 
-private_extern uint8_t *
-fileServiceTypeTransferV2Writer (BRFileServiceContext context,
-                                 BRFileService fs,
-                                 const void* entity,
-                                 uint32_t *bytesCount) {
-    return fileServiceTypeTransferWriter (context, fs, entity, bytesCount, GENERIC_TRANSFER_VERSION_2);
-}
-#endif
+private_extern BRArrayOf(BRCryptoTransfer)
+initialTransfersLoad (BRCryptoWalletManager manager) {
+    BRSetOf(BRCryptoTransfer*) transferSet = cryptoTransferSetCreate(100);
+    if (1 != fileServiceLoad (manager->fileService, transferSet, fileServiceTypeTransfers, 1)) {
+        cryptoTransferSetRelease(transferSet);
+        printf ("CRY: failed to load transactions");
+        return NULL;
+    }
 
+    size_t transfersCount = BRSetCount(transferSet);
+
+    BRArrayOf(BRCryptoTransfer) transfers;
+    array_new (transfers, transfersCount);
+    array_set_count(transfers, transfersCount);
+
+    BRSetAll(transferSet, (void**) transfers, transfersCount);
+    BRSetFree(transferSet); // Don't release => don't give transfers in `transfers`
+
+    printf ("CRY: loaded %zu transfers\n", transfersCount);
+    return transfers;
+}
