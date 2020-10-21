@@ -222,6 +222,11 @@ cryptoTransferGetAmountDirectedNet (BRCryptoTransfer transfer) {
     return amountNet;
 }
 
+extern BRCryptoCurrency
+cryptoTransferGetCurrencyForAmount (BRCryptoTransfer transfer) {
+    return cryptoUnitGetCurrency (transfer->unit);
+}
+
 extern BRCryptoUnit
 cryptoTransferGetUnitForAmount (BRCryptoTransfer transfer) {
     return cryptoUnitTake (transfer->unit);
@@ -378,8 +383,18 @@ cryptoTransferGetListener (BRCryptoTransfer transfer) {
 
 private_extern void
 cryptoTransferSetListener (BRCryptoTransfer transfer,
-                           BRCryptoTransferListener listener) {
-    transfer->listener = listener;
+                           BRCryptoTransferListener newListener) {
+    BRCryptoTransferListener oldListener = transfer->listener;
+
+    // Set the new listener
+    transfer->listener = newListener;
+
+    // If the oldListener didn't exists,then generate a created event.  Note: if the newListener
+    // doesn't exist, no event will be generated.
+    if (NULL == oldListener.listener)
+        cryptoTransferGenerateEvent (transfer, (BRCryptoTransferEvent) {
+            CRYPTO_TRANSFER_EVENT_CREATED
+        });
 }
 
 extern uint8_t *

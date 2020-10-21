@@ -161,6 +161,9 @@ extern "C" {
     extern BRCryptoHash
     cryptoTransferGetHash (BRCryptoTransfer transfer);
 
+    extern BRCryptoCurrency
+    cryptoTransferGetCurrencyForAmount (BRCryptoTransfer transfer);
+
     extern BRCryptoUnit
     cryptoTransferGetUnitForAmount (BRCryptoTransfer transfer);
 
