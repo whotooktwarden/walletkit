@@ -217,13 +217,9 @@ cryptoWalletDecBalance (BRCryptoWallet wallet,
 // transfer's state is become 'included' and thus the fee has been finalized.  Note, however, we
 // handle an estimated vs confirmed fee explicitly in the subsequent function.
 //
-#pragma clang diagnostic push
-#pragma GCC   diagnostic push
-#pragma clang diagnostic ignored "-Wunused-function"
-#pragma GCC   diagnostic ignored "-Wunused-function"
 static void
-cryptoWalletUpdBalance (BRCryptoWallet wallet) {
-    pthread_mutex_lock (&wallet->lock);
+cryptoWalletUpdBalance (BRCryptoWallet wallet, bool needLock) {
+    if (needLock) pthread_mutex_lock (&wallet->lock);
     BRCryptoAmount balance = cryptoAmountCreateInteger (0, wallet->unit);
 
     for (size_t index = 0; index < array_count(wallet->transfers); index++) {
@@ -235,12 +231,10 @@ cryptoWalletUpdBalance (BRCryptoWallet wallet) {
 
         balance = newBalance;
     }
-    pthread_mutex_unlock (&wallet->lock);
+    if (needLock) pthread_mutex_unlock (&wallet->lock);
 
     cryptoWalletSetBalance (wallet, balance);
 }
-#pragma clang diagnostic pop
-#pragma GCC   diagnostic pop
 
 //
 // When a transfer is confirmed, the fee can change.  A typical example is that for ETH a transfer
@@ -322,35 +316,6 @@ cryptoWalletAnnounceTransfer (BRCryptoWallet wallet,
         wallet->handlers->announceTransfer (wallet, transfer, type);
 }
 
-#if 0
-static void
-cryptoWalletAddTransfers (BRCryptoWallet wallet,
-                          BRArrayOf (BRCryptoTransfer) transfers,
-                          bool needLock) {
-    if (needLock) pthread_mutex_lock (&wallet->lock);
-    size_t transfersCount = array_count(transfers);
-
-    BRArrayOf (BRCryptoTransfer) addedTransfers;
-    array_new (addedTransfers, transfersCount);
-
-    for (size_t index = 0; index < array_count(transfers); index++) {
-        BRCryptoTransfer transfer = transfers[index];
-        if (CRYPTO_FALSE == cryptoWalletHasTransferLock (wallet, transfer, false))
-            array_add (addedTransfers, cryptoTransferTake (transfer));
-    }
-
-    array_add_array (wallet->transfers, addedTransfers, array_count (addedTransfers));
-    fileServiceSave ();
-//    cryptoWalletGenerateEvent (wallet, (BRCryptoWalletEvent) {
-//        CRYPTO_WALLET_EVENT_TRANSFERS_ADDED,
-//        { .transfers = addedTransfers }
-//    });
-
-    cryptoWalletUpdBalance (wallet);
-    if (needLock) pthread_mutex_unlock (&wallet->lock);
-}
-#endif
-
 extern void
 cryptoWalletAddTransfer (BRCryptoWallet wallet,
                          BRCryptoTransfer transfer) {
@@ -368,6 +333,34 @@ cryptoWalletAddTransfer (BRCryptoWallet wallet,
     pthread_mutex_unlock (&wallet->lock);
 }
 
+extern void
+cryptoWalletAddTransfers (BRCryptoWallet wallet,
+                          BRArrayOf(BRCryptoTransfer) transfers) {
+    pthread_mutex_lock (&wallet->lock);
+    for (size_t index = 0; index < array_count (transfers); index++) {
+        BRCryptoTransfer transfer = transfers[index];
+        if (CRYPTO_FALSE == cryptoWalletHasTransferLock (wallet, transfer, false)) {
+            array_add (wallet->transfers, cryptoTransferTake(transfer));
+            cryptoWalletSaveTransferToFileService (wallet, transfer);
+            cryptoWalletAnnounceTransfer (wallet, transfer, CRYPTO_WALLET_EVENT_TRANSFER_ADDED);
+        }
+    }
+
+    // Update the balance.
+    cryptoWalletUpdBalance (wallet, false);
+
+    // Generate TRANSFERS_ADDED w/ { transfers, balance }
+    for (size_t index = 0; index < array_count (transfers); index++) {
+        BRCryptoTransfer transfer = transfers[index];
+        cryptoWalletGenerateEvent (wallet, (BRCryptoWalletEvent) {
+            CRYPTO_WALLET_EVENT_TRANSFER_ADDED,
+            { .transfer = cryptoTransferTake (transfer) }
+        });
+    }
+
+    pthread_mutex_unlock (&wallet->lock);
+
+}
 extern void
 cryptoWalletRemTransfer (BRCryptoWallet wallet, BRCryptoTransfer transfer) {
     BRCryptoTransfer walletTransfer = NULL;
