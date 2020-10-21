@@ -156,6 +156,14 @@ private_extern uint64_t
 ethAccountGetThenIncrementAddressNonce(BREthereumAccount account,
                                        BREthereumAddress address);
 
+extern BRRlpItem
+ethAccountRlpEncode (const BREthereumAccount account,
+                     BRRlpCoder coder);
+
+extern BREthereumAccount
+ethAccountRlpDecode (BRRlpItem item,
+                     BRRlpCoder coder);
+
 #ifdef __cplusplus
 }
 #endif

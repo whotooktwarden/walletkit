@@ -384,3 +384,96 @@ ethAccountGetThenIncrementAddressNonce(BREthereumAccount account,
     // TODO: Lookup address, assert address
     return account->primaryAddress.nonce++;
 }
+
+extern BRRlpItem
+ethAccountRlpEncode (const BREthereumAccount account,
+                     BRRlpCoder coder) {
+
+    size_t mpkStringSize = BRBIP32SerializeMasterPubKey (NULL, 0, account->masterPubKey);
+    char mpkString[mpkStringSize];
+    BRBIP32SerializeMasterPubKey (mpkString, mpkStringSize, account->masterPubKey);
+
+    BREthereumAddressDetail address = account->primaryAddress;
+
+    return rlpEncodeList2 (coder,
+                           rlpEncodeString(coder, mpkString),
+                           rlpEncodeList (coder, 5,
+                                          ethAddressRlpEncode (address.raw, coder),
+                                          rlpEncodeString (coder, address.string),
+                                          rlpEncodeBytes  (coder, address.publicKey, sizeof (address.publicKey)),
+                                          rlpEncodeUInt64 (coder, address.index, 0),
+                                          rlpEncodeUInt64 (coder, address.nonce, 0)));
+}
+
+extern BREthereumAccount
+ethAccountRlpDecode (BRRlpItem item,
+                     BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (2 == itemsCount);
+
+    char *mpkString = rlpDecodeString (coder, items[0]);
+    BRMasterPubKey mpk = BRBIP32ParseMasterPubKey(mpkString);
+    free (mpkString);
+
+    size_t addrItemsCount;
+    const BRRlpItem *addrItems = rlpDecodeList (coder, items[1], &addrItemsCount);
+    assert (5 == addrItemsCount);
+
+    BREthereumAddress   raw = ethAddressRlpDecode (addrItems[0], coder);
+    char            *string = rlpDecodeString (coder, addrItems[1]);
+    BRRlpData publicKeyData = rlpDecodeBytes (coder, addrItems[2]);
+    uint32_t          index = (uint32_t) rlpDecodeUInt64 (coder, addrItems[3], 0);
+    uint64_t          nonce = rlpDecodeUInt64 (coder, addrItems[4], 0);
+
+    BREthereumAddressDetail addrDetails;
+    memset (&addrDetails, 0, sizeof (BREthereumAddressDetail));
+
+    addrDetails.raw = raw;
+    strcpy (addrDetails.string, string);
+    memcpy (addrDetails.publicKey, publicKeyData.bytes, publicKeyData.bytesCount);
+    addrDetails.index = index;
+    addrDetails.nonce = nonce;
+
+    free (string);
+    rlpDataRelease (publicKeyData);
+
+    BREthereumAccount account = malloc (sizeof (struct BREthereumAccountRecord));
+    account->masterPubKey   = mpk;
+    account->primaryAddress = addrDetails;
+
+    return account;
+}
+
+#if 0
+typedef struct BREthereumAddressDetailRecord {
+    BREthereumAddress raw;
+
+    /**
+     * The 'official' ethereum address string for (the external representation of) this
+     * BREthereum address.
+     *
+     * THIS IS NOT A SIMPLE STRING; this is a hex encoded (with hexEncode) string prefixed with
+     * "0x".  Generally, when using this string, for example when RLP encoding, one needs to
+     * convert back to the byte array (use rlpEncodeItemHexString())
+     */
+    char string[43];    // '0x' + <40 chars> + '\0'
+
+    /**
+     * The public key.  This started out as a BIP44 264 bits (65 bytes) array with a value of
+     * 0x04 at byte 0; we strip off that first byte and are left with 64.  Go figure.
+     */
+    uint8_t publicKey [64];  // BIP44: 'Master Public Key 'M' (264 bits) - 8
+
+    /**
+     * The BIP-44 Index used for this key.
+     */
+    uint32_t index;
+
+    /**
+     * The NEXT nonce value
+     */
+    uint64_t nonce;
+} BREthereumAddressDetail;
+
+#endif
