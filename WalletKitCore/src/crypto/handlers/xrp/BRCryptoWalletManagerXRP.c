@@ -21,6 +21,33 @@
 
 #include "ripple/BRRippleAccount.h"
 
+// MARK: - Transfer File Service
+
+enum {
+    CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1_XRP
+};
+
+#define CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1  \
+  cryptoFileServiceTransferVersionCreate (CRYPTO_FILE_SERVICE_TRANSFER_BASE_VERSION_1, \
+                                          CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1_XRP)
+
+static BRFileServiceTypeSpecification fileServiceSpecifications[] = {
+    {
+        fileServiceTypeTransfers,
+        CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1,
+        1,
+        {
+            {
+                CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1,
+                fileServiceTypeTransferV1Identifier,
+                fileServiceTypeTransferV1Reader,
+                fileServiceTypeTransferV1Writer
+            }
+        }
+    }
+};
+
+static size_t fileServiceSpecificationsCount = sizeof(fileServiceSpecifications)/sizeof(BRFileServiceTypeSpecification);
 
 // MARK: - Events
 
@@ -78,8 +105,8 @@ crytpWalletManagerCreateFileServiceXRP (BRCryptoWalletManager manager,
                                         BRFileServiceErrorHandler handler) {
     return fileServiceCreateFromTypeSpecfications (basePath, currency, network,
                                                    context, handler,
-                                                   0, // fileServiceSpecificationsCount,
-                                                   NULL); //fileServiceSpecifications);
+                                                   fileServiceSpecificationsCount,
+                                                   fileServiceSpecifications);
 }
 
 static const BREventType **
@@ -281,7 +308,7 @@ cryptoWalletManagerCreateWalletXRP (BRCryptoWalletManager manager,
 
     BRCryptoWalletFileServiceContext fileServiceContext = {
         manager->fileService,
-        NULL
+        fileServiceTypeTransfers
     };
 
     BRCryptoWallet wallet = cryptoWalletCreateAsXRP (manager->listenerWallet,
@@ -291,8 +318,15 @@ cryptoWalletManagerCreateWalletXRP (BRCryptoWalletManager manager,
                                                      xrpAccount);
     cryptoWalletManagerAddWallet (manager, wallet);
     
-    // TODO:XRP load transfers from fileService
-    
+    BRArrayOf(BRCryptoTransfer) transfers = initialTransfersLoad (manager);
+    if (NULL == transfers) array_new (transfers, 1);
+
+    for (size_t index = 0; index < array_count(transfers); index++) {
+        cryptoTransferSetListener (transfers[index], wallet->listenerTransfer);
+        cryptoWalletAddTransfer (wallet, transfers[index]);
+    }
+    array_free_all (transfers, cryptoTransferGive);
+
     cryptoUnitGive (unitAsDefault);
     cryptoUnitGive (unitAsBase);
     

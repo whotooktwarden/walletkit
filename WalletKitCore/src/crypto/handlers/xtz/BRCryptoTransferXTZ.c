@@ -97,6 +97,40 @@ cryptoTransferGetHashXTZ (BRCryptoTransfer transfer) {
     return cryptoHashCreateAsXTZ (hash);
 }
 
+static BRTezosTransfer
+cryptoTransferCreateTransferXTZ (BRCryptoTransfer transfer,
+                                 BRTezosHash *hash) {
+    BRTezosAddress sourceAddress = cryptoAddressAsXTZ (transfer->sourceAddress);
+    BRTezosAddress targetAddress = cryptoAddressAsXTZ (transfer->targetAddress);
+
+    BRCryptoBoolean overflow;
+    BRTezosUnitMutez amount = (BRTezosUnitMutez) cryptoAmountGetIntegerRaw (transfer->amount, &overflow);
+
+    BRTezosFeeBasis feeBasis = cryptoFeeBasisAsXTZ (transfer->feeBasisEstimated);
+
+    BRCryptoTransferState state = transfer->state;
+    uint64_t timestamp   = 0;
+    uint64_t blockHeight = 0;
+    int error = 0;
+
+    if (CRYPTO_TRANSFER_STATE_INCLUDED == state.type) {
+        timestamp = state.u.included.timestamp;
+        blockHeight = state.u.included.blockNumber;
+        error = CRYPTO_FALSE == state.u.included.success;
+    }
+    else if (CRYPTO_TRANSFER_STATE_ERRORED == state.type)
+        error = 1;
+
+    return tezosTransferCreate (sourceAddress,
+                                targetAddress,
+                                amount,
+                                tezosFeeBasisGetFee(&feeBasis),
+                                *hash,
+                                timestamp,
+                                blockHeight,
+                                error);
+}
+
 static uint8_t *
 cryptoTransferSerializeXTZ (BRCryptoTransfer transfer,
                             BRCryptoNetwork network,
@@ -112,6 +146,55 @@ cryptoTransferSerializeXTZ (BRCryptoTransfer transfer,
     }
     
     return serialization;
+}
+
+static BRRlpItem
+cryptoTransferRLPEncodeXTZ (BRCryptoTransfer transfer,
+                            BRCryptoNetwork network,
+                            BRRlpCoder coder) {
+    BRCryptoTransferXTZ transferXTZ = cryptoTransferCoerceXTZ (transfer);
+    BRTezosTransfer xtzTransfer = transferXTZ->xtzTransfer;
+
+    BRTezosHash hash = tezosTransferGetTransactionId (xtzTransfer);
+
+    return rlpEncodeList2 (coder,
+                           cryptoTransferRLPEncodeBase (transfer, network, coder),
+                           rlpEncodeBytes (coder, hash.bytes, TEZOS_HASH_BYTES));
+}
+
+typedef struct {
+    BRRlpItem  item;
+    BRRlpCoder coder;
+} BRCryptoTransferRLPDecodeContext;
+
+static void
+cryptoTransferRLPDecodeCreateCallbackXTZ (BRCryptoTransferCreateContext context,
+                                          BRCryptoTransfer transfer) {
+    BRCryptoTransferRLPDecodeContext *decodeContext = context;
+    BRCryptoTransferXTZ transferXTZ = cryptoTransferCoerceXTZ (transfer);
+
+    BRRlpData hashData = rlpDecodeBytes (decodeContext->coder, decodeContext->item);
+    assert (TEZOS_HASH_BYTES == hashData.bytesCount);
+    BRTezosHash *hash = (BRTezosHash*) hashData.bytes;
+
+    transferXTZ->xtzTransfer = cryptoTransferCreateTransferXTZ (transfer, hash);
+}
+
+static BRCryptoTransfer
+cryptoTransferRLPDecodeXTZ (BRRlpItem item,
+                            BRCryptoNetwork network,
+                            BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (2 == itemsCount);
+
+    BRCryptoTransferRLPDecodeContext context = { items[1], coder };
+
+    return cryptoTransferRLPDecodeBase (items[0],
+                                        network,
+                                        &context,
+                                        cryptoTransferRLPDecodeCreateCallbackXTZ,
+                                        coder);
 }
 
 static int
@@ -148,5 +231,7 @@ BRCryptoTransferHandlers cryptoTransferHandlersXTZ = {
     cryptoTransferGetHashXTZ,
     cryptoTransferSerializeXTZ,
     NULL, // getBytesForFeeEstimate
+    cryptoTransferRLPEncodeXTZ,
+    cryptoTransferRLPDecodeXTZ,
     cryptoTransferIsEqualXTZ
 };

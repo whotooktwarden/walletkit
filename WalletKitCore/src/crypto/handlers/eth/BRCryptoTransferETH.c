@@ -27,66 +27,100 @@ cryptoTransferCoerceETH (BRCryptoTransfer transfer) {
     return (BRCryptoTransferETH) transfer;
 }
 
-#if 0
-private_extern BRCryptoTransfer
-cryptoTransferCreateAsETHX (BRCryptoUnit unit,
-                           BRCryptoUnit unitForFee,
-//                           BREthereumEWM ewm,
-//                           BREthereumTransfer tid,
-                           BRCryptoFeeBasis feeBasisEstimated) {
-    BRCryptoTransfer transfer = cryptoTransferAllocAndInit (sizeof (struct BRCryptoTransferETHRecord),
-                                                                CRYPTO_NETWORK_TYPE_ETH,
-                                                                unit,
-                                                                unitForFee);
-    BRCryptoTransferETH transferETH = cryptoTransferCoerceETH (transfer);
 
-//    transfer->ewm = ewm;
-//    transfer->tid = tid;
-//
-//    transfer->sourceAddress = cryptoAddressCreateAsETH (ewmTransferGetSource (ewm, tid));
-//    transfer->targetAddress = cryptoAddressCreateAsETH (ewmTransferGetTarget (ewm, tid));
+// MARK: - Transfer Create Context
 
-    // cache the values that require the ewm
-    BREthereumAccount account = ewmGetAccount (ewm);
-    transfer->accountAddress = ethAccountGetPrimaryAddress (account);
+typedef struct {
+    BREthereumAccount account;
+    BREthereumTransferBasis basis;
+    BREthereumTransaction originatingTransaction;
+} BRCryptoTransferCreateContextETH;
 
-    // This function `cryptoTransferCreateAsETH()` includes an argument as
-    // `BRCryptoFeeBasis feeBasisEstimated` whereas the analogous function
-    // `cryptoTransferCreateAsBTC` does not.  Why is that?  For BTC the fee basis can be derived
-    // 100% reliably from the BRTransaction; both the 'estimated' and 'confirmed' fee basises are
-    // identical.  For ETH, the 'estimated' and the 'confirmed' basises may differ.  The difference
-    // being the distinction between ETH `gasLimit` (the 'estimate') and `gasUsed` (the
-    // 'confirmed').
-    //
-    // The EWM interface does not make this distinction clear.  It should.
-    // TODO: In EWM expose 'getEstimatedFeeBasis' and 'getConfirmedFeeBasis' functions.
-    //
-    // Turns out that this function is called in two contexts - when Crypto creates a transfer (in
-    // response to User input) and when EWM has a transfer announced (like when found in a
-    // blockchain).  When Crypto creates the transfer we have the `feeBasisEstimated` and it is used
-    // to create the EWM transfer.  Then EWM finds the transfer (see `cwmTransactionEventAsETH()`)
-    // we don't have the estimated fee - if we did nothing the `transfer->feeBasisEstimated` field
-    // would be NULL.
-    //
-    // Problem is we *require* one of 'estimated' or 'confirmed'.  See Transfer.swift at
-    // `public var fee: Amount { ... guard let feeBasis = confirmedFeeBasis ?? estimatedFeeBasis }`
-    // The 'confirmed' value is *ONLY SET* when a transfer is actually included in the blockchain;
-    // therefore we need an estimated fee basis.
-    //
-    // Thus: if `feeBasisEstimated` is NULL, we'll take the ETH fee basis (as the best we have).
+static BRRlpItem
+ethTransferBasisRlpEncode (BREthereumTransferBasis basis,
+                           BREthereumNetwork network,
+                           BRRlpCoder coder) {
+    switch (basis.type) {
+        case TRANSFER_BASIS_TRANSACTION:
+            return rlpEncodeList2 (coder,
+                                   rlpEncodeUInt64 (coder, basis.type, 0),
+                                   transactionRlpEncode (basis.u.transaction, network, RLP_TYPE_ARCHIVE, coder));
 
-    // Get the ETH feeBasis, in the event that we need it.
-    BREthereumFeeBasis ethFeeBasis = ewmTransferGetFeeBasis (ewm, tid);
+        case TRANSFER_BASIS_LOG:
+            return rlpEncodeList2 (coder,
+                                   rlpEncodeUInt64 (coder, basis.type, 0),
+                                   logRlpEncode (basis.u.log, RLP_TYPE_ARCHIVE, coder));
 
-    transfer->feeBasisEstimated = (NULL == feeBasisEstimated
-                                   ? cryptoFeeBasisCreateAsETH (unitForFee,
-                                                                ethFeeBasis.u.gas.limit,
-                                                                ethFeeBasis.u.gas.price)
-                                   : cryptoFeeBasisTake(feeBasisEstimated));
-
-    return transfer;
+        case TRANSFER_BASIS_EXCHANGE:
+            return rlpEncodeList2 (coder,
+                                   rlpEncodeUInt64 (coder, basis.type, 0),
+                                   ethExchangeRlpEncode (basis.u.exchange, RLP_TYPE_ARCHIVE, coder));
+    }
 }
-#endif
+
+static BREthereumTransferBasis
+ethTransferBasisRlpDecode (BRRlpItem item,
+                           BREthereumNetwork network,
+                           BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (itemsCount >= 1);
+
+    BREthereumTransferBasisType type = (BREthereumTransferBasisType) rlpDecodeUInt64 (coder, items[0], 0);
+
+    switch (type) {
+        case TRANSFER_BASIS_TRANSACTION:
+            return (BREthereumTransferBasis) {
+                type,
+                { .transaction = transactionRlpDecode (items[1], network, RLP_TYPE_ARCHIVE, coder) }
+            };
+
+        case TRANSFER_BASIS_LOG:
+            return (BREthereumTransferBasis) {
+                type,
+                { .log = logRlpDecode (items[1], RLP_TYPE_ARCHIVE, coder) }
+            };
+
+        case TRANSFER_BASIS_EXCHANGE:
+            return (BREthereumTransferBasis) {
+                type,
+                { .exchange = ethExchangeRlpDecode (items[1], RLP_TYPE_ARCHIVE, coder) }
+            };
+    }
+}
+
+static BRRlpItem
+cryptoTransferCreateContextRLPEncodeETH (BRCryptoTransferCreateContextETH context,
+                                         BRCryptoNetwork network,
+                                         BRRlpCoder coder) {
+    return (NULL != context.originatingTransaction
+            ? rlpEncodeList (coder, 3,
+                             ethAccountRlpEncode (context.account, coder),
+                             ethTransferBasisRlpEncode (context.basis, cryptoNetworkAsETH(network), coder),
+                             transactionRlpEncode (context.originatingTransaction, cryptoNetworkAsETH(network), RLP_TYPE_ARCHIVE, coder))
+            : rlpEncodeList2 (coder,
+                              ethAccountRlpEncode (context.account, coder),
+                              ethTransferBasisRlpEncode (context.basis, cryptoNetworkAsETH(network), coder)));
+}
+
+static BRCryptoTransferCreateContextETH
+cryptoTransferCreateContextRLPDecodeETH (BRRlpItem item,
+                                         BRCryptoNetwork network,
+                                         BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (3 == itemsCount || 2 == itemsCount);
+
+    return (BRCryptoTransferCreateContextETH) {
+        ethAccountRlpDecode (items[0], coder),
+        ethTransferBasisRlpDecode (items[1], cryptoNetworkAsETH (network), coder),
+        (2 == itemsCount
+         ? NULL
+         : transactionRlpDecode (items[2], cryptoNetworkAsETH (network), RLP_TYPE_ARCHIVE, coder))
+    };
+}
+
+// MARK: - Transfer
 
 extern BRCryptoTransferState
 cryptoTransferDeriveStateETH (BREthereumTransactionStatus status,
@@ -113,12 +147,6 @@ cryptoTransferDeriveStateETH (BREthereumTransactionStatus status,
             });
     }
 }
-
-typedef struct {
-    BREthereumAccount account;
-    BREthereumTransferBasis basis;
-    BREthereumTransaction originatingTransaction;
-} BRCryptoTransferCreateContextETH;
 
 static void
 cryptoTransferCreateCallbackETH (BRCryptoTransferCreateContext context,
@@ -493,6 +521,39 @@ cryptoTransferGetBytesForFeeEstimateETH (BRCryptoTransfer transfer,
     return bytes;
 }
 
+static BRRlpItem
+cryptoTransferRLPEncodeETH (BRCryptoTransfer transfer,
+                            BRCryptoNetwork network,
+                            BRRlpCoder coder) {
+    BRCryptoTransferETH transferETH = cryptoTransferCoerceETH (transfer);
+
+    BRCryptoTransferCreateContextETH createContextETH = {
+        transferETH->account,
+        transferETH->basis,
+        transferETH->originatingTransaction
+    };
+
+    return rlpEncodeList2 (coder,
+                           cryptoTransferRLPEncodeBase (transfer, network, coder),
+                           cryptoTransferCreateContextRLPEncodeETH (createContextETH, network, coder));
+}
+static BRCryptoTransfer
+cryptoTransferRLPDecodeETH (BRRlpItem item,
+                            BRCryptoNetwork network,
+                            BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (2 == itemsCount);
+
+    BRCryptoTransferCreateContextETH createContextBTC = cryptoTransferCreateContextRLPDecodeETH (items[1], network, coder);
+
+    return cryptoTransferRLPDecodeBase (items[0],
+                                        network,
+                                        &createContextBTC,
+                                        cryptoTransferCreateCallbackETH,
+                                        coder);
+}
+
 static int
 cryptoTransferEqualAsETH (BRCryptoTransfer tb1, BRCryptoTransfer tb2) {
     if (tb1 == tb2) return 1;
@@ -509,5 +570,7 @@ BRCryptoTransferHandlers cryptoTransferHandlersETH = {
     cryptoTransferGetHashETH,
     cryptoTransferSerializeETH,
     cryptoTransferGetBytesForFeeEstimateETH,
+    cryptoTransferRLPEncodeETH,
+    cryptoTransferRLPDecodeETH,
     cryptoTransferEqualAsETH
 };

@@ -22,6 +22,35 @@
 
 #include "tezos/BRTezosAccount.h"
 
+// MARK: - Transfer File Service
+
+enum {
+    CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1_XTZ
+};
+
+#define CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1  \
+  cryptoFileServiceTransferVersionCreate (CRYPTO_FILE_SERVICE_TRANSFER_BASE_VERSION_1, \
+                                          CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1_XTZ)
+
+
+static BRFileServiceTypeSpecification fileServiceSpecifications[] = {
+    {
+        fileServiceTypeTransfers,
+        CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1,
+        1,
+        {
+            {
+                CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1,
+                fileServiceTypeTransferV1Identifier,
+                fileServiceTypeTransferV1Reader,
+                fileServiceTypeTransferV1Writer
+            }
+        }
+    }
+};
+
+static size_t fileServiceSpecificationsCount = sizeof(fileServiceSpecifications)/sizeof(BRFileServiceTypeSpecification);
+
 
 // MARK: - Events
 
@@ -79,8 +108,8 @@ crytpWalletManagerCreateFileServiceXTZ (BRCryptoWalletManager manager,
                                         BRFileServiceErrorHandler handler) {
     return fileServiceCreateFromTypeSpecfications (basePath, currency, network,
                                                    context, handler,
-                                                   0, // fileServiceSpecificationsCount,
-                                                   NULL); //fileServiceSpecifications);
+                                                   fileServiceSpecificationsCount,
+                                                   fileServiceSpecifications);
 }
 
 static const BREventType **
@@ -336,7 +365,7 @@ cryptoWalletManagerCreateWalletXTZ (BRCryptoWalletManager manager,
 
     BRCryptoWalletFileServiceContext fileServiceContext = {
         manager->fileService,
-        NULL
+        fileServiceTypeTransfers
     };
 
     BRCryptoWallet wallet = cryptoWalletCreateAsXTZ (manager->listenerWallet,
@@ -346,8 +375,15 @@ cryptoWalletManagerCreateWalletXTZ (BRCryptoWalletManager manager,
                                                      xtzAccount);
     cryptoWalletManagerAddWallet (manager, wallet);
     
-    // TODO:XTZ load transfers from fileService
-    
+    BRArrayOf(BRCryptoTransfer) transfers = initialTransfersLoad (manager);
+    if (NULL == transfers) array_new (transfers, 1);
+
+    for (size_t index = 0; index < array_count(transfers); index++) {
+        cryptoTransferSetListener (transfers[index], wallet->listenerTransfer);
+        cryptoWalletAddTransfer (wallet, transfers[index]);
+    }
+    array_free_all (transfers, cryptoTransferGive);
+
     cryptoUnitGive (unitAsDefault);
     cryptoUnitGive (unitAsBase);
     

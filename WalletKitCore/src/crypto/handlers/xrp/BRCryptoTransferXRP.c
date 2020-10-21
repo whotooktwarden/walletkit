@@ -100,6 +100,40 @@ cryptoTransferGetHashXRP (BRCryptoTransfer transfer) {
     return cryptoHashCreateAsXRP (hash);
 }
 
+static BRRippleTransaction
+cryptoTransferCreateTransactionXRP (BRCryptoTransfer transfer,
+                                    BRRippleTransactionHash *hash) {
+    BRRippleAddress sourceAddress = cryptoAddressAsXRP (transfer->sourceAddress);
+    BRRippleAddress targetAddress = cryptoAddressAsXRP (transfer->targetAddress);
+
+    BRCryptoBoolean overflow;
+    BRRippleUnitDrops amount = (BRRippleUnitDrops) cryptoAmountGetIntegerRaw (transfer->amount, &overflow);
+
+    BRRippleFeeBasis feeBasis = cryptoFeeBasisAsXRP (transfer->feeBasisEstimated);
+
+    BRCryptoTransferState state = transfer->state;
+    uint64_t timestamp   = 0;
+    uint64_t blockHeight = 0;
+    int error = 0;
+
+    if (CRYPTO_TRANSFER_STATE_INCLUDED == state.type) {
+        timestamp = state.u.included.timestamp;
+        blockHeight = state.u.included.blockNumber;
+        error = CRYPTO_FALSE == state.u.included.success;
+    }
+    else if (CRYPTO_TRANSFER_STATE_ERRORED == state.type)
+        error = 1;
+
+    return rippleTransactionCreateFull (sourceAddress,
+                                        targetAddress,
+                                        amount,
+                                        feeBasis,
+                                        *hash,
+                                        timestamp,
+                                        blockHeight,
+                                        error);
+}
+
 static uint8_t *
 cryptoTransferSerializeXRP (BRCryptoTransfer transfer,
                             BRCryptoNetwork network,
@@ -114,8 +148,57 @@ cryptoTransferSerializeXRP (BRCryptoTransfer transfer,
     if (transaction) {
         serialization = rippleTransactionSerialize (transaction, serializationCount);
     }
-    
+
     return serialization;
+}
+
+static BRRlpItem
+cryptoTransferRLPEncodeXRP (BRCryptoTransfer transfer,
+                            BRCryptoNetwork network,
+                            BRRlpCoder coder) {
+    BRCryptoTransferXRP transferXRP = cryptoTransferCoerceXRP (transfer);
+    BRRippleTransaction transaction = transferXRP->xrpTransaction;
+
+    BRRippleTransactionHash hash = rippleTransactionGetHash (transaction);
+
+    return rlpEncodeList2 (coder,
+                           cryptoTransferRLPEncodeBase (transfer, network, coder),
+                           rlpEncodeBytes (coder, hash.bytes, 32));
+}
+
+typedef struct {
+    BRRlpItem  item;
+    BRRlpCoder coder;
+} BRCryptoTransferRLPDecodeContext;
+
+static void
+cryptoTransferRLPDecodeCreateCallbackXRP (BRCryptoTransferCreateContext context,
+                                          BRCryptoTransfer transfer) {
+    BRCryptoTransferRLPDecodeContext *decodeContext = context;
+    BRCryptoTransferXRP transferXRP = cryptoTransferCoerceXRP (transfer);
+
+    BRRlpData hashData = rlpDecodeBytes (decodeContext->coder, decodeContext->item);
+    assert (32 == hashData.bytesCount);
+    BRRippleTransactionHash *hash = (BRRippleTransactionHash*) hashData.bytes;
+
+    transferXRP->xrpTransaction = cryptoTransferCreateTransactionXRP (transfer, hash);
+}
+
+static BRCryptoTransfer
+cryptoTransferRLPDecodeXRP (BRRlpItem item,
+                            BRCryptoNetwork network,
+                            BRRlpCoder coder) {
+    size_t itemsCount;
+    const BRRlpItem *items = rlpDecodeList (coder, item, &itemsCount);
+    assert (2 == itemsCount);
+    
+    BRCryptoTransferRLPDecodeContext context = { items[1], coder };
+
+    return cryptoTransferRLPDecodeBase (items[0],
+                                        network,
+                                        &context,
+                                        cryptoTransferRLPDecodeCreateCallbackXRP,
+                                        coder);
 }
 
 static int
@@ -155,5 +238,7 @@ BRCryptoTransferHandlers cryptoTransferHandlersXRP = {
     cryptoTransferGetHashXRP,
     cryptoTransferSerializeXRP,
     NULL, // getBytesForFeeEstimate
+    cryptoTransferRLPEncodeXRP,
+    cryptoTransferRLPDecodeXRP,
     cryptoTransferIsEqualXRP
 };

@@ -10,12 +10,25 @@
 //
 #include "BRCryptoETH.h"
 
+#include "crypto/BRCryptoFileService.h"
 #include "ethereum/blockchain/BREthereumBlock.h"
 #include "ethereum/blockchain/BREthereumTransaction.h"
 #include "ethereum/blockchain/BREthereumLog.h"
 #include "ethereum/les/BREthereumLES.h"
 
+/// MARK: - Transfer File Service
+
+enum {
+    CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1_ETH
+};
+
+#define CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1  \
+  cryptoFileServiceTransferVersionCreate (CRYPTO_FILE_SERVICE_TRANSFER_BASE_VERSION_1, \
+                                          CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1_ETH)
+
+
 /// MARK: - Transaction File Service
+
 #define fileServiceTypeTransactions "transactions"
 
 enum {
@@ -450,6 +463,20 @@ initialWalletsLoadETH (BRCryptoWalletManager manager) {
 #endif
 
 static BRFileServiceTypeSpecification fileServiceSpecifications[] = {
+    {
+        fileServiceTypeTransfers,
+        CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1,
+        1,
+        {
+            {
+                CRYPTO_FILE_SERVICE_TRANSFER_VERSION_1,
+                fileServiceTypeTransferV1Identifier,
+                fileServiceTypeTransferV1Reader,
+                fileServiceTypeTransferV1Writer
+            }
+        }
+    },
+
     {
         fileServiceTypeTransactions,
         EWM_TRANSACTION_VERSION_1,

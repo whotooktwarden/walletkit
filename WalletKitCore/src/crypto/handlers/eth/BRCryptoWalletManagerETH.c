@@ -10,10 +10,12 @@
 //
 #include "BRCryptoETH.h"
 
+#include "support/BRArray.h"
 #include "crypto/BRCryptoAccountP.h"
 #include "crypto/BRCryptoNetworkP.h"
 #include "crypto/BRCryptoKeyP.h"
 #include "crypto/BRCryptoClientP.h"
+#include "crypto/BRCryptoFileService.h"
 #include "crypto/BRCryptoWalletManagerP.h"
 
 // MARK: - Forward Declarations
@@ -28,6 +30,8 @@ cryptoWalletManagerCoerceETH (BRCryptoWalletManager manager) {
     assert (CRYPTO_NETWORK_TYPE_ETH == manager->type);
     return (BRCryptoWalletManagerETH) manager;
 }
+
+// MARK: - Manager Create Context
 
 typedef struct {
     BREthereumNetwork network;
@@ -45,6 +49,68 @@ cryptoWaleltMangerCreateCallbackETH (BRCryptoWalletManagerCreateContext context,
     managerETH->account = contextETH->account;
     managerETH->coder   = contextETH->coder;
 }
+
+// MARK: - Wallet Create Map
+
+///
+/// A `BRCryptoWalletCreateMap` holds a mapping between a `wallet` and an array or `transfers` that
+/// must be added to `wallet`
+///
+typedef struct BRCryptoWalletCreateMapRecord {
+    BRCryptoWallet wallet;
+    BRArrayOf(BRCryptoTransfer)transfers;
+} *BRCryptoWalletCreateMap;
+
+static BRCryptoWalletCreateMap
+cryptoWalletCreateMapCreate (BRCryptoWallet wallet) {
+    BRCryptoWalletCreateMap map = calloc (1, sizeof (struct BRCryptoWalletCreateMapRecord));
+
+    map->wallet = cryptoWalletTake (wallet);
+    array_new (map->transfers, 10);
+
+    return map;
+}
+
+static void
+cryptoWalletCreateMapRelease (BRCryptoWalletCreateMap map) {
+    cryptoWalletGive (map->wallet);
+    array_free_all (map->transfers, cryptoTransferGive);
+    free (map);
+}
+
+static void
+cryptoWalletCreateMapAddTransfer (BRCryptoWalletCreateMap map,
+                                  BRCryptoTransfer transfer) {
+    array_add (map->transfers, cryptoTransferTake (transfer));
+}
+
+static BRCryptoWalletCreateMap
+cryptoWalletCreateMapEnsure (BRArrayOf(BRCryptoWalletCreateMap) maps,
+                             BRCryptoWallet wallet,
+                             bool *isNew) {
+    *isNew = false;
+    for (size_t index = 0; index < array_count(maps); index++) {
+        if (wallet == maps[index]->wallet)
+            return maps[index];
+    }
+
+    *isNew = true;
+    return cryptoWalletCreateMapCreate (wallet);
+}
+
+static BRArrayOf(BRCryptoWalletCreateMap)
+cryptoWalletCreateMapsCreate (size_t count) {
+    BRArrayOf (BRCryptoWalletCreateMap) maps;
+    array_new (maps, count);
+    return maps;
+}
+
+static void
+cryptoWalletCreateMapsRelease (BRArrayOf(BRCryptoWalletCreateMap) maps) {
+    array_free_all (maps, cryptoWalletCreateMapRelease);
+}
+
+// MARK: - Manager
 
 static BRCryptoWalletManager
 cryptoWalletManagerCreateETH (BRCryptoWalletManagerListener listener,
@@ -73,11 +139,6 @@ cryptoWalletManagerCreateETH (BRCryptoWalletManagerListener listener,
                                                                      cryptoWaleltMangerCreateCallbackETH);
     BRCryptoWalletManagerETH managerETH = cryptoWalletManagerCoerceETH (manager);
 
-    // Load the persistently stored data.
-    BRSetOf(BREthereumTransaction) transactions = initialTransactionsLoadETH (manager);
-    BRSetOf(BREthereumLog)         logs         = initialLogsLoadETH         (manager);
-    BRSetOf(BREthereumExchanges)   exchanges    = initialExchangesLoadETH    (manager);
-
     // Save the recovered tokens
     managerETH->tokens = initialTokensLoadETH (manager);
 
@@ -93,20 +154,47 @@ cryptoWalletManagerCreateETH (BRCryptoWalletManagerListener listener,
         cryptoCurrencyGive (c);
     }
 
-    // Announce all the provided transactions...
-    FOR_SET (BREthereumTransaction, transaction, transactions)
-        ewmHandleTransaction (managerETH, BCS_CALLBACK_TRANSACTION_ADDED, transaction);
-    BRSetFree(transactions);
+    // Load the persistently stored transfers data.  Older versions of WalletKit stored Ethereum
+    // {transactions, logs, exchanges}.  We'll ignore them; they came from either 'ETH on Proxy' or
+    // 'ETH on Blockset' and either way can be easily reconstructed with a simple HTTPS query but
+    // now based on `GET transfes/`.
+    BRArrayOf(BRCryptoTransfer) transfers = initialTransfersLoad (manager);
 
-    // ... and all the provided logs
-    FOR_SET (BREthereumLog, log, logs)
-        ewmHandleLog (managerETH, BCS_CALLBACK_LOG_ADDED, log);
-    BRSetFree (logs);
+    // Create `maps`, and array of `BRCryptoWalletCreateMap` with each 'map' holding a pair of
+    // `wallet` and `array of transfers`.  Once we process all `transfers` we'll announce each
+    // wallet with all its transfers at once.
+    BRArrayOf (BRCryptoWalletCreateMap) maps = cryptoWalletCreateMapsCreate(4);
 
-    // ... and all the provided exhanges
-    FOR_SET (BREthereumExchange, exchange, exchanges)
-        ewmHandleExchange (managerETH, BCS_CALLBACK_EXCHANGE_ADDED,  exchange);
-    BRSetFree(exchanges);
+    // Iterate over `transfers`; ensure a `wallet` for each, then a) configure the transfer's
+    // listener and b) add the transfer to the wallet's map.
+    for (size_t index = 0; index < array_count(transfers); index++) {
+        BRCryptoTransfer transfer = transfers[index];
+
+        // Create (or Find) the `wallet` for `transfer`
+        BRCryptoCurrency currency = cryptoTransferGetCurrencyForAmount (transfer);
+        BRCryptoWallet   wallet   = cryptoWalletManagerCreateWallet (manager, currency);
+        cryptoCurrencyGive(currency);
+        assert (NULL != wallet);
+
+        // Set the `transfer's` listen based on `wallet`
+        cryptoTransferSetListener (transfer, wallet->listenerTransfer);
+
+        // Add transfer to the 'Wallet Create Map`
+        bool isNew = false;
+        BRCryptoWalletCreateMap map = cryptoWalletCreateMapEnsure (maps, wallet, &isNew);
+        if (isNew) array_add (maps, map);
+        cryptoWalletCreateMapAddTransfer (map, transfer);
+
+        cryptoWalletGive (wallet);
+    }
+    array_free_all (transfers, cryptoTransferGive);
+
+    // Iterate over `maps`; add all the map's transfers to the map's wallet
+    for (size_t mid = 0; mid < array_count(maps); mid++)
+        cryptoWalletAddTransfers (maps[mid]->wallet, maps[mid]->transfers);
+
+    // Clean up.
+    cryptoWalletCreateMapsRelease(maps);
 
     pthread_mutex_unlock (&manager->lock);
     return manager;
@@ -369,7 +457,7 @@ cryptoWalletManagerCreateWalletETH (BRCryptoWalletManager manager,
 
     BRCryptoWalletFileServiceContext fileServiceContext = {
         manager->fileService,
-        fileServiceTypeTransactionsETH
+        fileServiceTypeTransfers
     };
 
     BRCryptoWallet wallet = cryptoWalletCreateAsETH (manager->listenerWallet,
@@ -413,7 +501,7 @@ cryptoWalletManagerEnsureWalletForToken (BRCryptoWalletManagerETH managerETH,
 
         BRCryptoWalletFileServiceContext fileServiceContext = {
             managerETH->base.fileService,
-            fileServiceTypeTransactionsETH
+            fileServiceTypeTransfers
         };
 
         wallet = cryptoWalletCreateAsETH (managerETH->base.listenerWallet,
