@@ -78,7 +78,8 @@ initialTransfersLoad (BRCryptoWalletManager manager) {
     BRSetOf(BRCryptoTransfer*) transferSet = cryptoTransferSetCreate(100);
     if (1 != fileServiceLoad (manager->fileService, transferSet, fileServiceTypeTransfers, 1)) {
         cryptoTransferSetRelease(transferSet);
-        printf ("CRY: failed to load transactions");
+        printf ("CRY: %4s: failed to load transactions",
+                cryptoBlockChainTypeGetCurrencyCode (manager->type));
         return NULL;
     }
 
@@ -91,6 +92,8 @@ initialTransfersLoad (BRCryptoWalletManager manager) {
     BRSetAll(transferSet, (void**) transfers, transfersCount);
     BRSetFree(transferSet); // Don't release => don't give transfers in `transfers`
 
-    printf ("CRY: loaded %zu transfers\n", transfersCount);
+    printf ("CRY: %4s: loaded %4zu transfers\n",
+            cryptoBlockChainTypeGetCurrencyCode (manager->type),
+            transfersCount);
     return transfers;
 }

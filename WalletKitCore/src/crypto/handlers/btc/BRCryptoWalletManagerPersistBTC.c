@@ -358,4 +358,3 @@ const char *fileServiceTypePeersBTC        = fileServiceTypePeers;
 
 size_t fileServiceSpecificationsCountBTC = sizeof(fileServiceSpecifications)/sizeof(BRFileServiceTypeSpecification);
 BRFileServiceTypeSpecification *fileServiceSpecificationsBTC = fileServiceSpecifications;
-
